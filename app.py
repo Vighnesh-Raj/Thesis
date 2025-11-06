@@ -501,7 +501,7 @@ def main() -> None:
                 step=1.0,
                 help="Acceptable drift from the zero-cost target once trades are rounded.",
             )
-                override = st.selectbox("Choose regime", options, index=default_idx)
+            override = st.selectbox("Choose regime", options, index=default_idx)
             horizon = st.selectbox("Scenario horizon", ["1w", "1m", "3m", "1y"], index=0)
             n_scen = st.slider("Simulations", 1000, 10000, 2000, step=500)
             alpha = st.slider("Tail level (α)", 0.80, 0.99, 0.95, step=0.01)
