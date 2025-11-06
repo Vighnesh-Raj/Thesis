@@ -8,6 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -68,6 +72,17 @@ def _inject_robinhood_styles() -> None:
             font-weight: 700;
             color: #21CE99;
         }
+        .regime-card p {
+            font-size: 2rem;
+            margin-bottom: 0.35rem;
+            color: #21CE99;
+        }
+        .regime-card .regime-reason {
+            font-size: 0.95rem;
+            line-height: 1.45;
+            color: rgba(230,244,234,0.78);
+            margin-top: 0.35rem;
+        }
         .shadow-card {
             background: rgba(6,18,12,0.8);
             border-radius: 18px;
@@ -127,6 +142,7 @@ def load_history(years_back: int = 10):
 
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
+def load_intraday(period: str = "1d", interval: str = "1m") -> pd.DataFrame:
 def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
     if isinstance(data.index, pd.DatetimeIndex):
@@ -177,6 +193,15 @@ def _build_payoff_curve(quotes: pd.DataFrame, buy, sell, n_shares: int, S0: floa
     return pd.DataFrame({"SPY": S_grid, "Total": total})
 
 
+def _build_price_sparkline(
+    df: pd.DataFrame,
+    column: str,
+    color: str,
+    fill: str,
+    hover_label: str,
+) -> go.Figure:
+    fig = go.Figure()
+    series = df[column].astype(float)
 def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     color_spy = "#21CE99"
@@ -185,6 +210,134 @@ def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
     fig.add_trace(
         go.Scatter(
             x=df.index,
+            y=series,
+            mode="lines",
+            line=dict(color=color, width=2.4),
+            fill="tozeroy",
+            fillcolor=fill,
+            hovertemplate="%{x|%b %d %I:%M %p}<br>" + f"{hover_label}: " + "%{y:.2f}<extra></extra>",
+            name=hover_label,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[df.index[-1]],
+            y=[series.iloc[-1]],
+            mode="markers",
+            marker=dict(size=9, color="#E6F4EA", line=dict(color=color, width=2)),
+            hovertemplate="%{x|%b %d %I:%M %p}<br>" + f"{hover_label}: " + "%{y:.2f}<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=10, b=10),
+        hovermode="x unified",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+        font=dict(family="Inter", color="#E6F4EA"),
+        height=170,
+    )
+    return fig
+
+
+def _render_price_card(
+    label: str,
+    ticker: str,
+    price_display: str,
+    df: pd.DataFrame,
+    column: str,
+    color: str,
+    fill: str,
+    key: str,
+) -> None:
+    if df.empty or column not in df:
+        chart_html = """
+            <div class='chart-unavailable'>
+                <p>Intraday data temporarily unavailable.</p>
+            </div>
+        """
+        height = 160
+    else:
+        fig = _build_price_sparkline(df, column, color=color, fill=fill, hover_label=ticker)
+        chart_html = pio.to_html(
+            fig,
+            include_plotlyjs="cdn",
+            full_html=False,
+            config={"displayModeBar": False, "responsive": True},
+        )
+        height = 280
+
+    components.html(
+        f"""
+        <style>
+            :root {{
+                color-scheme: dark;
+                font-family: 'Inter', sans-serif;
+            }}
+            body {{
+                background: transparent;
+                margin: 0;
+                color: #E6F4EA;
+                font-family: 'Inter', sans-serif;
+            }}
+            .price-card-wrapper {{
+                background: linear-gradient(145deg, rgba(33,206,153,0.22), rgba(3,9,6,0.68));
+                border-radius: 18px;
+                border: 1px solid rgba(33,206,153,0.22);
+                box-shadow: 0 30px 45px -28px rgba(33,206,153,0.55);
+                padding: 1.15rem 1.25rem 0.55rem;
+            }}
+            .price-card-header {{
+                display: flex;
+                flex-direction: column;
+                gap: 0.3rem;
+            }}
+            .price-card-header .label {{
+                font-size: 0.85rem;
+                letter-spacing: 0.08rem;
+                text-transform: uppercase;
+                color: rgba(230,244,234,0.75);
+            }}
+            .price-card-header .value {{
+                font-size: 2.35rem;
+                font-weight: 700;
+                color: #21CE99;
+                line-height: 1.1;
+            }}
+            .price-card-header .ticker {{
+                font-size: 0.92rem;
+                color: rgba(230,244,234,0.6);
+            }}
+            .chart-unavailable {{
+                margin-top: 0.75rem;
+                padding: 0.75rem 0.85rem;
+                background: rgba(3,9,6,0.65);
+                border-radius: 14px;
+                font-size: 0.9rem;
+                color: rgba(230,244,234,0.75);
+            }}
+            .chart-unavailable p {{
+                margin: 0;
+            }}
+        </style>
+        <div class='price-card-wrapper'>
+            <div class='price-card-header'>
+                <span class='label'>{label}</span>
+                <span class='value'>{price_display}</span>
+                <span class='ticker'>{ticker}</span>
+            </div>
+            {chart_html}
+        </div>
+        """,
+        height=height,
+        scrolling=False,
+        key=key,
+    )
+
+
             y=df["SPY"],
             name="SPY",
             line=dict(color=color_spy, width=2),
@@ -265,6 +418,18 @@ def main() -> None:
     suggested = suggested_regime_today(df_reg)
     regime_reason = build_regime_explanation(df_reg, lo, hi)
 
+    try:
+        intraday_df = load_intraday()
+    except ValueError:
+        intraday_df = pd.DataFrame()
+
+    last_refresh_display = None
+    if not intraday_df.empty:
+        latest_spy = float(intraday_df["SPY"].iloc[-1])
+        latest_vix = float(intraday_df["^VIX"].iloc[-1])
+        last_refresh = pd.Timestamp(intraday_df.index[-1])
+        last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
+
     st.title("🛡️ SPY Hedge Cockpit")
     st.markdown(
         """
@@ -277,6 +442,47 @@ def main() -> None:
     )
 
     with st.container():
+        col1, col2, col3 = st.columns([1.15, 1.15, 1], gap="large")
+        with col1:
+            _render_price_card(
+                label="SPDR S&P 500 ETF",
+                ticker="SPY",
+                price_display=f"${latest_spy:,.2f}",
+                df=intraday_df,
+                column="SPY",
+                color="#21CE99",
+                fill="rgba(33,206,153,0.28)",
+                key="spy-price-card",
+            )
+        with col2:
+            _render_price_card(
+                label="CBOE Volatility Index",
+                ticker="VIX",
+                price_display=f"{latest_vix:,.2f}",
+                df=intraday_df,
+                column="^VIX",
+                color="#F5A623",
+                fill="rgba(245,166,35,0.28)",
+                key="vix-price-card",
+            )
+        with col3:
+            st.markdown(
+                f"""
+                <div class='metric-card regime-card'>
+                    <h3>Suggested Regime</h3>
+                    <p>{suggested}</p>
+                    <div class='regime-reason'>{regime_reason}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    caption = f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
+    if last_refresh_display:
+        caption += f" • Intraday refreshed {last_refresh_display}"
+    st.caption(caption)
+
+    st.caption("Live SPY and VIX prices update every minute while this session remains open.")
         col1, col2, col3 = st.columns([1.15, 1.15, 1])
         with col1:
             st.markdown(
@@ -361,6 +567,7 @@ def main() -> None:
             working_df,
             num_rows="dynamic",
             hide_index=True,
+            width="stretch",
             use_container_width=True,
             column_config={
                 "kind": st.column_config.SelectboxColumn(
@@ -396,6 +603,11 @@ def main() -> None:
             )
             override = None
             if regime_mode == "Manual":
+                regime_options = ("LOW", "MID", "HIGH")
+                default_idx = regime_options.index(suggested) if suggested in regime_options else 1
+                override = st.selectbox(
+                    "Choose regime",
+                    regime_options,
                 options = ["LOW", "MID", "HIGH"]
                 default_idx = options.index(suggested) if suggested in options else 1
                 override = st.selectbox(
@@ -525,6 +737,7 @@ def main() -> None:
     with tabs[2]:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
         st.subheader("Simulation Results")
+        run_clicked = st.button("🚀 Simulate / Optimize")
         run_clicked = st.button("🚀 Simulate / Optimize", use_container_width=False)
 
         if run_clicked:
@@ -595,6 +808,11 @@ def main() -> None:
                     col_lp, col_round = st.columns(2)
                     with col_lp:
                         st.caption("Fractional LP solution")
+                        st.dataframe(lp_df, width="stretch")
+                        st.metric("LP spend", _format_currency(spend_lp))
+                    with col_round:
+                        st.caption("Rounded (executable) portfolio")
+                        st.dataframe(rounded_df, width="stretch")
                         st.dataframe(lp_df, use_container_width=True)
                         st.metric("LP spend", _format_currency(spend_lp))
                     with col_round:
@@ -619,6 +837,7 @@ def main() -> None:
                         }
                     )
                     st.markdown("### Risk Snapshot")
+                    st.dataframe(metrics_df, width="stretch")
                     st.dataframe(metrics_df, use_container_width=True)
 
                     payoff_df = _build_payoff_curve(
@@ -633,6 +852,9 @@ def main() -> None:
 
                     chart_col1, chart_col2 = st.columns(2)
                     with chart_col1:
+                        st.pyplot(fig_payoff, width="stretch")
+                    with chart_col2:
+                        st.pyplot(fig_hist, width="stretch")
                         st.pyplot(fig_payoff, use_container_width=True)
                     with chart_col2:
                         st.pyplot(fig_hist, use_container_width=True)
