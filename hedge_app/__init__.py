@@ -8,6 +8,8 @@ from .data import (
     suggested_regime_today,
     select_regime_pool,
     prepare_regime_data,
+    fetch_intraday_quotes,
+    build_regime_explanation,
 )
 from .engine import (
     Prefs,
@@ -23,6 +25,8 @@ __all__ = [
     "suggested_regime_today",
     "select_regime_pool",
     "prepare_regime_data",
+    "fetch_intraday_quotes",
+    "build_regime_explanation",
     "Prefs",
     "validate_quotes_df_bidask_strict",
     "run_hedge_workflow",

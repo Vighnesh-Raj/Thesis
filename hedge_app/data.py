@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Iterable, Tuple
 from typing import Tuple
 
 import numpy as np
@@ -84,6 +85,86 @@ def suggested_regime_today(df_reg: pd.DataFrame) -> str:
     return str(df_reg["regime"].iloc[-1])
 
 
+def fetch_intraday_quotes(
+    symbols: Iterable[str] = ("SPY", "^VIX"),
+    period: str = "5d",
+    interval: str = "5m",
+) -> pd.DataFrame:
+    """Download near real-time quotes for the provided symbols.
+
+    The request is split per symbol to avoid ambiguous MultiIndex handling when
+    multiple tickers are passed to ``yfinance`` at once.
+    """
+
+    frames = []
+    for symbol in symbols:
+        auto_adjust = symbol != "^VIX"
+        raw = yf.download(
+            symbol,
+            period=period,
+            interval=interval,
+            progress=False,
+            auto_adjust=auto_adjust,
+        )
+        if raw.empty:
+            continue
+        close = _safe_close(raw, symbol).rename(symbol)
+        frames.append(close)
+
+    if not frames:
+        raise ValueError("No intraday data returned for the requested symbols.")
+
+    return pd.concat(frames, axis=1).dropna()
+
+
+def build_regime_explanation(df_reg: pd.DataFrame, lo: float, hi: float) -> str:
+    """Return a short narrative explaining the suggested regime."""
+
+    current_regime = suggested_regime_today(df_reg)
+    vix_now = float(df_reg["VIX"].iloc[-1])
+    spy_now = float(df_reg["SPY"].iloc[-1])
+
+    vix_prev = float(df_reg["VIX"].iloc[-2]) if len(df_reg) > 1 else np.nan
+    vix_change = vix_now - vix_prev if np.isfinite(vix_prev) else np.nan
+    vix_pct_rank = float(df_reg["VIX"].rank(pct=True).iloc[-1] * 100.0)
+    trailing_mean = float(df_reg["VIX"].tail(WINDOW_DAYS).mean())
+
+    lookback = min(5, len(df_reg) - 1)
+    spy_return = np.nan
+    if lookback > 0:
+        spy_return = (spy_now / float(df_reg["SPY"].iloc[-1 - lookback]) - 1.0) * 100.0
+
+    change_str = "flat"
+    if np.isfinite(vix_change):
+        change_str = f"up {vix_change:+.2f} pts" if vix_change else "unchanged"
+
+    if current_regime == "LOW":
+        reason = (
+            f"VIX at {vix_now:.2f} sits beneath the calm threshold of {lo:.2f} "
+            f"({vix_pct_rank:.0f}th percentile) and is near the {WINDOW_DAYS}-day average "
+            f"of {trailing_mean:.2f}."
+        )
+    elif current_regime == "HIGH":
+        reason = (
+            f"VIX at {vix_now:.2f} breaks above the stress threshold of {hi:.2f} "
+            f"({vix_pct_rank:.0f}th percentile), signalling elevated hedging demand."
+        )
+    else:
+        reason = (
+            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) "
+            f"cut-offs ({vix_pct_rank:.0f}th percentile), pointing to a neutral regime."
+        )
+
+    if np.isfinite(vix_change) and vix_change:
+        reason += f" Today's move is {change_str}."
+
+    if np.isfinite(spy_return):
+        direction = "higher" if spy_return >= 0 else "lower"
+        reason += f" SPY traded {direction} by {abs(spy_return):.1f}% over the last {lookback} sessions."
+
+    return reason
+
+
 def select_regime_pool(
     df_reg: pd.DataFrame, mode: str = "auto", override: str | None = None
 ) -> Tuple[str, pd.DataFrame]:
@@ -121,4 +202,6 @@ __all__ = [
     "suggested_regime_today",
     "select_regime_pool",
     "prepare_regime_data",
+    "fetch_intraday_quotes",
+    "build_regime_explanation",
 ]
