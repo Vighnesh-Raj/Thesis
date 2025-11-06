@@ -7,10 +7,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from hedge_app import (
     Prefs,
@@ -19,8 +16,6 @@ from hedge_app import (
     suggested_regime_today,
     validate_quotes_df_bidask_strict,
     run_hedge_workflow,
-    fetch_intraday_quotes,
-    build_regime_explanation,
 )
 
 st.set_page_config(
@@ -115,26 +110,10 @@ def _inject_robinhood_styles() -> None:
 _inject_robinhood_styles()
 
 
-REFRESH_SECONDS = 60
-st_autorefresh(interval=REFRESH_SECONDS * 1000, key="intraday_autorefresh")
-
-
 @st.cache_data(show_spinner=False)
 def load_history(years_back: int = 10):
     df_reg, lo, hi = prepare_regime_data(years_back=years_back)
     return df_reg, float(lo), float(hi)
-
-
-@st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
-def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
-    data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
-    if isinstance(data.index, pd.DatetimeIndex):
-        data = data.copy()
-        try:
-            data.index = data.index.tz_localize(None)
-        except TypeError:
-            pass
-    return data
 
 
 def _default_quotes() -> pd.DataFrame:
@@ -174,47 +153,6 @@ def _build_payoff_curve(quotes: pd.DataFrame, buy, sell, n_shares: int, S0: floa
     shares_leg = n_shares * (S_grid - S0)
     total = shares_leg + np.array(payoff) - init_cost
     return pd.DataFrame({"SPY": S_grid, "Total": total})
-
-
-def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    color_spy = "#21CE99"
-    color_vix = "#F5A623"
-
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df["SPY"],
-            name="SPY",
-            line=dict(color=color_spy, width=2),
-            hovertemplate="%{x|%b %d %H:%M}<br>SPY: $%{y:.2f}<extra></extra>",
-        ),
-        secondary_y=False,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df["^VIX"],
-            name="VIX",
-            line=dict(color=color_vix, width=2, dash="dot"),
-            hovertemplate="%{x|%b %d %H:%M}<br>VIX: %{y:.2f}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        margin=dict(l=0, r=0, t=10, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
-        hovermode="x unified",
-        plot_bgcolor="rgba(6,18,12,0.8)",
-        paper_bgcolor="rgba(6,18,12,0.0)",
-        font=dict(family="Inter", color="#E6F4EA"),
-    )
-    fig.update_yaxes(title_text="SPY", secondary_y=False, color=color_spy)
-    fig.update_yaxes(title_text="VIX", secondary_y=True, color=color_vix)
-    fig.update_xaxes(title_text="Intraday (Eastern Time)")
-    return fig
 
 
 def _plot_payoff_curve(data: pd.DataFrame, S0: float):
@@ -262,7 +200,6 @@ def main() -> None:
     latest_spy = float(df_reg["SPY"].iloc[-1])
     latest_vix = float(df_reg["VIX"].iloc[-1])
     suggested = suggested_regime_today(df_reg)
-    regime_reason = build_regime_explanation(df_reg, lo, hi)
 
     st.title("🛡️ SPY Hedge Cockpit")
     st.markdown(
@@ -297,43 +234,6 @@ def main() -> None:
         f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
     )
 
-    try:
-        intraday_df = load_intraday()
-    except ValueError:
-        intraday_df = pd.DataFrame()
-
-    if not intraday_df.empty:
-        st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
-        st.caption("Live SPY/VIX quotes refresh automatically every minute.")
-    else:
-        st.warning("Intraday quotes are temporarily unavailable; retry in a moment.")
-
-    st.markdown(
-        f"""
-        <div class='shadow-card' style='margin-top:1rem;'>
-            <h4 style='margin-bottom:0.4rem;'>Why {suggested} today?</h4>
-            <p style='margin-bottom:0; color:rgba(230,244,234,0.8);'>{regime_reason}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class='shadow-card' style='margin-top:1rem;'>
-            <h4 style='margin-bottom:0.4rem;'>How to hedge with this cockpit</h4>
-            <ol style='padding-left:1.2rem; color:rgba(230,244,234,0.8);'>
-                <li>Use the live SPY/VIX context above to anchor your view on volatility and choose (or override) the regime.</li>
-                <li>Paste or edit your SPY option quotes in the table, matching the contracts you can trade.</li>
-                <li>Configure scenario assumptions and portfolio permissions on the next tab using the hover tips for guidance.</li>
-                <li>Launch <strong>Simulate / Optimize</strong> to compare fractional vs. rounded hedges and review payoff &amp; CVaR.</li>
-            </ol>
-            <p style='margin-bottom:0; color:rgba(230,244,234,0.65);'>Adjust quotes or constraints and rerun as market conditions evolve.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.markdown("---")
 
     tabs = st.tabs(["Option Quotes", "Scenario & Constraints", "Results"])
@@ -343,12 +243,7 @@ def main() -> None:
         st.subheader("Editable Option Quotes")
         st.caption("Paste values directly or upload a CSV. Bid/ask and a single expiry are required.")
 
-        uploaded = st.file_uploader(
-            "Upload CSV with option quotes",
-            type=["csv"],
-            label_visibility="collapsed",
-            help="Include columns for option kind (C/P), strike, bid, ask, expiry, and optionally a label column.",
-        )
+        uploaded = st.file_uploader("Upload CSV with option quotes", type=["csv"], label_visibility="collapsed")
         if uploaded is not None:
             uploaded_df = pd.read_csv(uploaded)
             working_df = uploaded_df
@@ -390,115 +285,29 @@ def main() -> None:
                 "Regime Selection",
                 options=("Auto (use suggested)", "Manual"),
                 horizontal=True,
-                help="Follow the app's suggested volatility regime or choose your own bucket for stress testing.",
             )
             override = None
             if regime_mode == "Manual":
                 options = ["LOW", "MID", "HIGH"]
                 default_idx = options.index(suggested) if suggested in options else 1
-                override = st.selectbox(
-                    "Choose regime",
-                    options,
-                    index=default_idx,
-                    help="Pick the historical volatility bucket used to bootstrap SPY/VIX scenarios.",
-                )
-            horizon = st.selectbox(
-                "Scenario horizon",
-                ["1w", "1m", "3m", "1y"],
-                index=0,
-                help="Length of each bootstrapped path driving hedge outcomes (weekly to yearly horizons).",
-            )
-            n_scen = st.slider(
-                "Simulations",
-                1000,
-                10000,
-                2000,
-                step=500,
-                help="Number of Monte Carlo draws sampled from the chosen regime history.",
-            )
-            alpha = st.slider(
-                "Tail level (α)",
-                0.80,
-                0.99,
-                0.95,
-                step=0.01,
-                help="Confidence level for CVaR: lower α focuses on extreme losses, higher α on more typical drawdowns.",
-            )
+                override = st.selectbox("Choose regime", options, index=default_idx)
+            horizon = st.selectbox("Scenario horizon", ["1w", "1m", "3m", "1y"], index=0)
+            n_scen = st.slider("Simulations", 1000, 10000, 2000, step=500)
+            alpha = st.slider("Tail level (α)", 0.80, 0.99, 0.95, step=0.01)
 
         with prefs_col:
-            n_shares = st.number_input(
-                "SPY shares to hedge",
-                min_value=0,
-                value=20,
-                step=1,
-                help="Underlying shares (or delta-equivalent exposure) that require protection.",
-            )
-            retail_mode = st.toggle(
-                "Retail mode (buy-only)",
-                value=True,
-                help="Restrict hedges to long option legs for retail account compliance.",
-            )
-            allow_selling = st.toggle(
-                "Allow selling legs",
-                value=False,
-                help="Enable short option legs when running institutional or margin strategies.",
-            )
-            zero_cost = st.toggle(
-                "Enforce zero-cost structure",
-                value=False,
-                help="Match purchased and sold premium so the hedge has no upfront cost before rounding.",
-            )
-            budget_usd = st.number_input(
-                "Premium budget (USD)",
-                min_value=0.0,
-                value=200.0,
-                step=50.0,
-                help="Cap the cash outlay allocated to buying protection.",
-            )
-            allow_net_credit = st.toggle(
-                "Allow net credit when not zero-cost",
-                value=False,
-                help="Permit receiving net credit if zero-cost is off; useful for collar-style overlays.",
-            )
-            max_buy = st.slider(
-                "Max buy contracts per leg",
-                0.0,
-                200.0,
-                10.0,
-                step=1.0,
-                help="Upper bound for long contracts on any single option leg.",
-            )
-            max_sell = st.slider(
-                "Max sell contracts per leg",
-                0.0,
-                200.0,
-                10.0,
-                step=1.0,
-                help="Upper bound for short contracts on any single option leg.",
-            )
-            integer_round = st.toggle(
-                "Round to whole contracts",
-                value=True,
-                help="Force rounded trades to whole-number contracts (disable for fractional overlays).",
-            )
-            step = st.select_slider(
-                "Rounding step",
-                options=[1.0, 0.5, 0.1],
-                value=1.0,
-                help="Smallest contract increment allowed when rounding the optimized solution.",
-            )
-            keep_budget = st.toggle(
-                "Budget enforced after rounding",
-                value=True,
-                help="Reapply the premium budget to the rounded trade list to avoid overspending.",
-            )
-            zc_tol = st.number_input(
-                "Zero-cost tolerance after rounding (USD)",
-                min_value=0.0,
-                value=5.0,
-                step=1.0,
-                help="Acceptable drift from the zero-cost target once trades are rounded.",
-            )
+            n_shares = st.number_input("SPY shares to hedge", min_value=0, value=20, step=1)
+            retail_mode = st.toggle("Retail mode (buy-only)", value=True)
+            allow_selling = st.toggle("Allow selling legs", value=False)
+            zero_cost = st.toggle("Enforce zero-cost structure", value=False)
+            budget_usd = st.number_input("Premium budget (USD)", min_value=0.0, value=200.0, step=50.0)
+            allow_net_credit = st.toggle("Allow net credit when not zero-cost", value=False)
+            max_buy = st.slider("Max buy contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            max_sell = st.slider("Max sell contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            integer_round = st.toggle("Round to whole contracts", value=True)
+            step = st.select_slider("Rounding step", options=[1.0, 0.5, 0.1], value=1.0)
+            keep_budget = st.toggle("Budget enforced after rounding", value=True)
+            zc_tol = st.number_input("Zero-cost tolerance after rounding (USD)", min_value=0.0, value=5.0, step=1.0)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
