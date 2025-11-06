@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+import streamlit as st
 
 from hedge_app import (
     Prefs,
@@ -349,6 +350,7 @@ def main() -> None:
             label_visibility="collapsed",
             help="Include columns for option kind (C/P), strike, bid, ask, expiry, and optionally a label column.",
         )
+        uploaded = st.file_uploader("Upload CSV with option quotes", type=["csv"], label_visibility="collapsed")
         if uploaded is not None:
             uploaded_df = pd.read_csv(uploaded)
             working_df = uploaded_df
@@ -499,6 +501,24 @@ def main() -> None:
                 step=1.0,
                 help="Acceptable drift from the zero-cost target once trades are rounded.",
             )
+                override = st.selectbox("Choose regime", options, index=default_idx)
+            horizon = st.selectbox("Scenario horizon", ["1w", "1m", "3m", "1y"], index=0)
+            n_scen = st.slider("Simulations", 1000, 10000, 2000, step=500)
+            alpha = st.slider("Tail level (α)", 0.80, 0.99, 0.95, step=0.01)
+
+        with prefs_col:
+            n_shares = st.number_input("SPY shares to hedge", min_value=0, value=20, step=1)
+            retail_mode = st.toggle("Retail mode (buy-only)", value=True)
+            allow_selling = st.toggle("Allow selling legs", value=False)
+            zero_cost = st.toggle("Enforce zero-cost structure", value=False)
+            budget_usd = st.number_input("Premium budget (USD)", min_value=0.0, value=200.0, step=50.0)
+            allow_net_credit = st.toggle("Allow net credit when not zero-cost", value=False)
+            max_buy = st.slider("Max buy contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            max_sell = st.slider("Max sell contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            integer_round = st.toggle("Round to whole contracts", value=True)
+            step = st.select_slider("Rounding step", options=[1.0, 0.5, 0.1], value=1.0)
+            keep_budget = st.toggle("Budget enforced after rounding", value=True)
+            zc_tol = st.number_input("Zero-cost tolerance after rounding (USD)", min_value=0.0, value=5.0, step=1.0)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
