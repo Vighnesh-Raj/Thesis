@@ -414,7 +414,6 @@ def _render_price_card(
         """,
         height=height,
         scrolling=False,
-        key=key,
     )
 
 
