@@ -13,6 +13,10 @@ import plotly.io as pio
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
+from plotly.subplots import make_subplots
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+import streamlit as st
 
 from hedge_app import (
     Prefs,
@@ -150,6 +154,7 @@ def load_history(years_back: int = 10):
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
 def load_intraday(period: str = "1d", interval: str = "1m") -> pd.DataFrame:
+def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
     if isinstance(data.index, pd.DatetimeIndex):
         data = data.copy()
@@ -208,6 +213,10 @@ def _build_price_sparkline(
 ) -> go.Figure:
     fig = go.Figure()
     series = df[column].astype(float)
+def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    color_spy = "#21CE99"
+    color_vix = "#F5A623"
 
     fig.add_trace(
         go.Scatter(
@@ -340,6 +349,39 @@ def _render_price_card(
     )
 
 
+            y=df["SPY"],
+            name="SPY",
+            line=dict(color=color_spy, width=2),
+            hovertemplate="%{x|%b %d %H:%M}<br>SPY: $%{y:.2f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["^VIX"],
+            name="VIX",
+            line=dict(color=color_vix, width=2, dash="dot"),
+            hovertemplate="%{x|%b %d %H:%M}<br>VIX: %{y:.2f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+        hovermode="x unified",
+        plot_bgcolor="rgba(6,18,12,0.8)",
+        paper_bgcolor="rgba(6,18,12,0.0)",
+        font=dict(family="Inter", color="#E6F4EA"),
+    )
+    fig.update_yaxes(title_text="SPY", secondary_y=False, color=color_spy)
+    fig.update_yaxes(title_text="VIX", secondary_y=True, color=color_vix)
+    fig.update_xaxes(title_text="Intraday (Eastern Time)")
+    return fig
+
+
 def _plot_payoff_curve(data: pd.DataFrame, S0: float):
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
@@ -452,6 +494,47 @@ def main() -> None:
     st.caption(caption)
 
     st.caption("Live SPY and VIX prices update every minute while this session remains open.")
+        col1, col2, col3 = st.columns([1.15, 1.15, 1])
+        with col1:
+            st.markdown(
+                f"<div class='metric-card'><h3>SPY Last</h3><p>${latest_spy:,.2f}</p></div>",
+                unsafe_allow_html=True,
+            )
+        with col2:
+            st.markdown(
+                f"<div class='metric-card'><h3>VIX Last</h3><p>{latest_vix:,.2f}</p></div>",
+                unsafe_allow_html=True,
+            )
+        with col3:
+            st.markdown(
+                f"<div class='metric-card'><h3>Suggested Regime</h3><p>{suggested}</p></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.caption(
+        f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
+    )
+
+    try:
+        intraday_df = load_intraday()
+    except ValueError:
+        intraday_df = pd.DataFrame()
+
+    if not intraday_df.empty:
+        st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
+        st.caption("Live SPY/VIX quotes refresh automatically every minute.")
+    else:
+        st.warning("Intraday quotes are temporarily unavailable; retry in a moment.")
+
+    st.markdown(
+        f"""
+        <div class='shadow-card' style='margin-top:1rem;'>
+            <h4 style='margin-bottom:0.4rem;'>Why {suggested} today?</h4>
+            <p style='margin-bottom:0; color:rgba(230,244,234,0.8);'>{regime_reason}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         """
@@ -484,6 +567,7 @@ def main() -> None:
             label_visibility="collapsed",
             help="Include columns for option kind (C/P), strike, bid, ask, expiry, and optionally a label column.",
         )
+        uploaded = st.file_uploader("Upload CSV with option quotes", type=["csv"], label_visibility="collapsed")
         if uploaded is not None:
             uploaded_df = pd.read_csv(uploaded)
             working_df = uploaded_df
@@ -495,6 +579,8 @@ def main() -> None:
             num_rows="dynamic",
             hide_index=True,
             **_DATA_EDITOR_KWARGS,
+            width="stretch",
+            use_container_width=True,
             column_config={
                 "kind": st.column_config.SelectboxColumn(
                     "Kind",
@@ -534,6 +620,11 @@ def main() -> None:
                 override = st.selectbox(
                     "Choose regime",
                     regime_options,
+                options = ["LOW", "MID", "HIGH"]
+                default_idx = options.index(suggested) if suggested in options else 1
+                override = st.selectbox(
+                    "Choose regime",
+                    options,
                     index=default_idx,
                     help="Pick the historical volatility bucket used to bootstrap SPY/VIX scenarios.",
                 )
@@ -634,6 +725,24 @@ def main() -> None:
                 step=1.0,
                 help="Acceptable drift from the zero-cost target once trades are rounded.",
             )
+            override = st.selectbox("Choose regime", options, index=default_idx)
+            horizon = st.selectbox("Scenario horizon", ["1w", "1m", "3m", "1y"], index=0)
+            n_scen = st.slider("Simulations", 1000, 10000, 2000, step=500)
+            alpha = st.slider("Tail level (α)", 0.80, 0.99, 0.95, step=0.01)
+
+        with prefs_col:
+            n_shares = st.number_input("SPY shares to hedge", min_value=0, value=20, step=1)
+            retail_mode = st.toggle("Retail mode (buy-only)", value=True)
+            allow_selling = st.toggle("Allow selling legs", value=False)
+            zero_cost = st.toggle("Enforce zero-cost structure", value=False)
+            budget_usd = st.number_input("Premium budget (USD)", min_value=0.0, value=200.0, step=50.0)
+            allow_net_credit = st.toggle("Allow net credit when not zero-cost", value=False)
+            max_buy = st.slider("Max buy contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            max_sell = st.slider("Max sell contracts per leg", 0.0, 200.0, 10.0, step=1.0)
+            integer_round = st.toggle("Round to whole contracts", value=True)
+            step = st.select_slider("Rounding step", options=[1.0, 0.5, 0.1], value=1.0)
+            keep_budget = st.toggle("Budget enforced after rounding", value=True)
+            zc_tol = st.number_input("Zero-cost tolerance after rounding (USD)", min_value=0.0, value=5.0, step=1.0)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -641,6 +750,7 @@ def main() -> None:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
         st.subheader("Simulation Results")
         run_clicked = st.button("🚀 Simulate / Optimize")
+        run_clicked = st.button("🚀 Simulate / Optimize", use_container_width=False)
 
         if run_clicked:
             with st.spinner("Running CVaR optimization..."):
@@ -715,6 +825,16 @@ def main() -> None:
                     with col_round:
                         st.caption("Rounded (executable) portfolio")
                         st.dataframe(rounded_df, **_DATAFRAME_KWARGS)
+                        st.dataframe(lp_df, width="stretch")
+                        st.metric("LP spend", _format_currency(spend_lp))
+                    with col_round:
+                        st.caption("Rounded (executable) portfolio")
+                        st.dataframe(rounded_df, width="stretch")
+                        st.dataframe(lp_df, use_container_width=True)
+                        st.metric("LP spend", _format_currency(spend_lp))
+                    with col_round:
+                        st.caption("Rounded (executable) portfolio")
+                        st.dataframe(rounded_df, use_container_width=True)
                         st.metric("Rounded spend", _format_currency(spend_rounded))
 
                     alpha_label = f"{alpha:.2f}"
@@ -735,6 +855,8 @@ def main() -> None:
                     )
                     st.markdown("### Risk Snapshot")
                     st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
+                    st.dataframe(metrics_df, width="stretch")
+                    st.dataframe(metrics_df, use_container_width=True)
 
                     payoff_df = _build_payoff_curve(
                         quotes_validated,
@@ -748,6 +870,9 @@ def main() -> None:
 
                     chart_col1, chart_col2 = st.columns(2)
                     with chart_col1:
+                        st.pyplot(fig_payoff, width="stretch")
+                    with chart_col2:
+                        st.pyplot(fig_hist, width="stretch")
                         st.pyplot(fig_payoff, use_container_width=True)
                     with chart_col2:
                         st.pyplot(fig_hist, use_container_width=True)
