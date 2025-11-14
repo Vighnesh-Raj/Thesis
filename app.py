@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+from plotly.subplots import make_subplots
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
@@ -25,12 +26,17 @@ from hedge_app import (
     build_regime_explanation,
 )
 
+# -----------------------------------------------------------------------------
+# Page & layout config
+# -----------------------------------------------------------------------------
+
 st.set_page_config(
     page_title="SPY Hedge Cockpit",
     page_icon="🛡️",
     layout="wide",
 )
 
+# Dynamic kwargs for dataframe / data_editor depending on Streamlit version
 if "width" in inspect.signature(st.dataframe).parameters:
     _DATAFRAME_KWARGS = {"width": "stretch"}
 else:
@@ -40,8 +46,6 @@ if "width" in inspect.signature(st.data_editor).parameters:
     _DATA_EDITOR_KWARGS = {"width": "stretch"}
 else:
     _DATA_EDITOR_KWARGS = {"use_container_width": True}
-
-_COMPONENTS_HTML_ACCEPTS_KEY = "key" in inspect.signature(components.html).parameters
 
 
 def _inject_robinhood_styles() -> None:
@@ -139,6 +143,9 @@ def _inject_robinhood_styles() -> None:
 
 _inject_robinhood_styles()
 
+# -----------------------------------------------------------------------------
+# Data loading & helpers
+# -----------------------------------------------------------------------------
 
 REFRESH_SECONDS = 60
 st_autorefresh(interval=REFRESH_SECONDS * 1000, key="intraday_autorefresh")
@@ -151,22 +158,15 @@ def load_history(years_back: int = 10):
 
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
-def load_intraday(period: str = "1d", interval: str = "1m") -> pd.DataFrame:
-    try:
-        data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
-    except ValueError:
-        # YFinance occasionally serves empty frames for 1 minute data during
-        # pre/post-market hours. Fall back to a wider window/granularity so the
-        # header cards always render something meaningful.
-        data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period="5d", interval="5m")
-
+def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
+    data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
     if isinstance(data.index, pd.DatetimeIndex):
         data = data.copy()
         try:
             data.index = data.index.tz_localize(None)
         except TypeError:
+            # Already tz-aware or tz-naive
             pass
-        data = data.sort_index()
     return data
 
 
@@ -188,13 +188,21 @@ def _format_currency(value: float) -> str:
     return f"{sign}${abs(value):,.2f}"
 
 
-def _build_payoff_curve(quotes: pd.DataFrame, buy, sell, n_shares: int, S0: float) -> pd.DataFrame:
+def _build_payoff_curve(
+    quotes: pd.DataFrame,
+    buy: np.ndarray,
+    sell: np.ndarray,
+    n_shares: int,
+    S0: float,
+) -> pd.DataFrame:
     S_grid = np.linspace(0.7 * S0, 1.3 * S0, 181)
     mult = 100.0
-    ask = quotes["ask"].to_numpy(float)
-    bid = quotes["bid"].to_numpy(float)
-    strikes = quotes["strike"].to_numpy(float)
+    ask = quotes["ask"].to_numpy(dtype=float)
+    bid = quotes["bid"].to_numpy(dtype=float)
+    strikes = quotes["strike"].to_numpy(dtype=float)
     kinds = quotes["kind"].tolist()
+
+    # Initial cost of options (buy at ask, sell at bid)
     init_cost = float((ask * mult) @ buy + (-bid * mult) @ sell)
 
     payoff = []
@@ -204,8 +212,10 @@ def _build_payoff_curve(quotes: pd.DataFrame, buy, sell, n_shares: int, S0: floa
             intrinsic = max(S - strikes[j], 0.0) if kind == "C" else max(strikes[j] - S, 0.0)
             value += buy[j] * intrinsic * mult - sell[j] * intrinsic * mult
         payoff.append(value)
+
     shares_leg = n_shares * (S_grid - S0)
     total = shares_leg + np.array(payoff) - init_cost
+
     return pd.DataFrame({"SPY": S_grid, "Total": total})
 
 
@@ -217,6 +227,9 @@ def _build_price_sparkline(
     hover_label: str,
 ) -> go.Figure:
     fig = go.Figure()
+    if df.empty or column not in df:
+        return fig
+
     series = df[column].astype(float)
 
     fig.add_trace(
@@ -227,7 +240,9 @@ def _build_price_sparkline(
             line=dict(color=color, width=2.4),
             fill="tozeroy",
             fillcolor=fill,
-            hovertemplate="%{x|%b %d %I:%M %p}<br>" + f"{hover_label}: " + "%{y:.2f}<extra></extra>",
+            hovertemplate="%{x|%b %d %I:%M %p}<br>"
+            f"{hover_label}: "
+            "%{y:.2f}<extra></extra>",
             name=hover_label,
         )
     )
@@ -237,7 +252,9 @@ def _build_price_sparkline(
             y=[series.iloc[-1]],
             mode="markers",
             marker=dict(size=9, color="#E6F4EA", line=dict(color=color, width=2)),
-            hovertemplate="%{x|%b %d %I:%M %p}<br>" + f"{hover_label}: " + "%{y:.2f}<extra></extra>",
+            hovertemplate="%{x|%b %d %I:%M %p}<br>"
+            f"{hover_label}: "
+            "%{y:.2f}<extra></extra>",
             showlegend=False,
         )
     )
@@ -255,6 +272,57 @@ def _build_price_sparkline(
     return fig
 
 
+def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    if df.empty:
+        return fig
+
+    color_spy = "#21CE99"
+    color_vix = "#F5A623"
+
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["SPY"],
+            name="SPY",
+            line=dict(color=color_spy, width=2),
+            hovertemplate="%{x|%b %d %H:%M}<br>SPY: $%{y:.2f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["^VIX"],
+            name="VIX",
+            line=dict(color=color_vix, width=2, dash="dot"),
+            hovertemplate="%{x|%b %d %H:%M}<br>VIX: %{y:.2f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+        ),
+        hovermode="x unified",
+        plot_bgcolor="rgba(6,18,12,0.8)",
+        paper_bgcolor="rgba(6,18,12,0.0)",
+        font=dict(family="Inter", color="#E6F4EA"),
+    )
+    fig.update_yaxes(title_text="SPY", secondary_y=False, color=color_spy)
+    fig.update_yaxes(title_text="VIX", secondary_y=True, color=color_vix)
+    fig.update_xaxes(title_text="Intraday (Eastern Time)")
+
+    return fig
+
+
 def _render_price_card(
     label: str,
     ticker: str,
@@ -263,8 +331,7 @@ def _render_price_card(
     column: str,
     color: str,
     fill: str,
-    *,
-    component_key: str | None = None,
+    key: str,
 ) -> None:
     if df.empty or column not in df:
         chart_html = """
@@ -282,13 +349,6 @@ def _render_price_card(
             config={"displayModeBar": False, "responsive": True},
         )
         height = 280
-
-    html_kwargs = {
-        "height": height,
-        "scrolling": False,
-    }
-    if component_key and _COMPONENTS_HTML_ACCEPTS_KEY:
-        html_kwargs["key"] = component_key
 
     components.html(
         f"""
@@ -352,7 +412,9 @@ def _render_price_card(
             {chart_html}
         </div>
         """,
-        **html_kwargs,
+        height=height,
+        scrolling=False,
+        key=key,
     )
 
 
@@ -369,7 +431,7 @@ def _plot_payoff_curve(data: pd.DataFrame, S0: float):
     return fig
 
 
-def _plot_pnl_hist(unhedged, hedged):
+def _plot_pnl_hist(unhedged: np.ndarray, hedged: np.ndarray):
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     bins = max(30, int(math.sqrt(len(unhedged))))
@@ -396,6 +458,10 @@ def _clean_quotes(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+# -----------------------------------------------------------------------------
+# Main app
+# -----------------------------------------------------------------------------
+
 def main() -> None:
     df_reg, lo, hi = load_history()
     latest_spy = float(df_reg["SPY"].iloc[-1])
@@ -403,6 +469,7 @@ def main() -> None:
     suggested = suggested_regime_today(df_reg)
     regime_reason = build_regime_explanation(df_reg, lo, hi)
 
+    # Intraday data (optional)
     try:
         intraday_df = load_intraday()
     except ValueError:
@@ -415,6 +482,7 @@ def main() -> None:
         last_refresh = pd.Timestamp(intraday_df.index[-1])
         last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
 
+    # Header
     st.title("🛡️ SPY Hedge Cockpit")
     st.markdown(
         """
@@ -426,6 +494,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    # Top cards: SPY, VIX, regime
     with st.container():
         col1, col2, col3 = st.columns([1.15, 1.15, 1], gap="large")
         with col1:
@@ -437,7 +506,7 @@ def main() -> None:
                 column="SPY",
                 color="#21CE99",
                 fill="rgba(33,206,153,0.28)",
-                component_key="spy-price-card",
+                key="spy-price-card",
             )
         with col2:
             _render_price_card(
@@ -448,7 +517,7 @@ def main() -> None:
                 column="^VIX",
                 color="#F5A623",
                 fill="rgba(245,166,35,0.28)",
-                component_key="vix-price-card",
+                key="vix-price-card",
             )
         with col3:
             st.markdown(
@@ -466,8 +535,25 @@ def main() -> None:
     if last_refresh_display:
         caption += f" • Intraday refreshed {last_refresh_display}"
     st.caption(caption)
-
     st.caption("Live SPY and VIX prices update every minute while this session remains open.")
+
+    # Intraday chart
+    if not intraday_df.empty:
+        st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
+        st.caption("Live SPY/VIX quotes refresh automatically every minute.")
+    else:
+        st.warning("Intraday quotes are temporarily unavailable; retry in a moment.")
+
+    # Explanation & how-to cards
+    st.markdown(
+        f"""
+        <div class='shadow-card' style='margin-top:1rem;'>
+            <h4 style='margin-bottom:0.4rem;'>Why {suggested} today?</h4>
+            <p style='margin-bottom:0; color:rgba(230,244,234,0.8);'>{regime_reason}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         """
@@ -489,6 +575,9 @@ def main() -> None:
 
     tabs = st.tabs(["Option Quotes", "Scenario & Constraints", "Results"])
 
+    # -------------------------------------------------------------------------
+    # Tab 0: Option Quotes
+    # -------------------------------------------------------------------------
     with tabs[0]:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
         st.subheader("Editable Option Quotes")
@@ -498,8 +587,12 @@ def main() -> None:
             "Upload CSV with option quotes",
             type=["csv"],
             label_visibility="collapsed",
-            help="Include columns for option kind (C/P), strike, bid, ask, expiry, and optionally a label column.",
+            help=(
+                "Include columns for option kind (C/P), strike, bid, ask, expiry, "
+                "and optionally a label column."
+            ),
         )
+
         if uploaded is not None:
             uploaded_df = pd.read_csv(uploaded)
             working_df = uploaded_df
@@ -531,11 +624,15 @@ def main() -> None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # -------------------------------------------------------------------------
+    # Tab 1: Scenario & Constraints
+    # -------------------------------------------------------------------------
     with tabs[1]:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
         st.subheader("Scenario Engine & Permissions")
 
         scenario_col, prefs_col = st.columns(2, gap="large")
+
         with scenario_col:
             regime_mode = st.radio(
                 "Regime Selection",
@@ -545,7 +642,7 @@ def main() -> None:
             )
             override = None
             if regime_mode == "Manual":
-                regime_options = ("LOW", "MID", "HIGH")
+                regime_options = ["LOW", "MID", "HIGH"]
                 default_idx = regime_options.index(suggested) if suggested in regime_options else 1
                 override = st.selectbox(
                     "Choose regime",
@@ -553,6 +650,7 @@ def main() -> None:
                     index=default_idx,
                     help="Pick the historical volatility bucket used to bootstrap SPY/VIX scenarios.",
                 )
+
             horizon = st.selectbox(
                 "Scenario horizon",
                 ["1w", "1m", "3m", "1y"],
@@ -653,9 +751,13 @@ def main() -> None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # -------------------------------------------------------------------------
+    # Tab 2: Results
+    # -------------------------------------------------------------------------
     with tabs[2]:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
         st.subheader("Simulation Results")
+
         run_clicked = st.button("🚀 Simulate / Optimize")
 
         if run_clicked:
@@ -667,6 +769,7 @@ def main() -> None:
 
                     quotes_validated = validate_quotes_df_bidask_strict(quotes_clean)
 
+                    # Regime pool selection
                     if regime_mode.startswith("Auto"):
                         chosen, pool = select_regime_pool(df_reg, mode="auto")
                     else:
@@ -733,15 +836,19 @@ def main() -> None:
                         st.dataframe(rounded_df, **_DATAFRAME_KWARGS)
                         st.metric("Rounded spend", _format_currency(spend_rounded))
 
+                    # Risk metrics
                     alpha_label = f"{alpha:.2f}"
                     var_unh = np.quantile(-pnl["unhedged"], alpha)
                     var_hd = np.quantile(-pnl["hedged"], alpha)
-                    def cvar(series):
+
+                    def cvar(series: np.ndarray) -> float:
                         losses = -series
                         cutoff = np.quantile(losses, alpha)
                         return float(losses[losses >= cutoff].mean())
+
                     cvar_unh = cvar(pnl["unhedged"])
                     cvar_hd = cvar(pnl["hedged"])
+
                     metrics_df = pd.DataFrame(
                         {
                             "": ["Unhedged", "Hedged", "Improvement"],
@@ -752,6 +859,7 @@ def main() -> None:
                     st.markdown("### Risk Snapshot")
                     st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
 
+                    # Payoff & PnL distribution
                     payoff_df = _build_payoff_curve(
                         quotes_validated,
                         rounded["buy"],
@@ -764,9 +872,9 @@ def main() -> None:
 
                     chart_col1, chart_col2 = st.columns(2)
                     with chart_col1:
-                        st.pyplot(fig_payoff, width="stretch")
+                        st.pyplot(fig_payoff, use_container_width=True)
                     with chart_col2:
-                        st.pyplot(fig_hist, width="stretch")
+                        st.pyplot(fig_hist, use_container_width=True)
 
                 except Exception as exc:  # pylint: disable=broad-except
                     st.error(f"{type(exc).__name__}: {exc}")
@@ -775,6 +883,7 @@ def main() -> None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # Sidebar
     st.sidebar.title("Need a public link?")
     st.sidebar.markdown(
         "Deploy to **Streamlit Community Cloud** (free) to generate a shareable URL."
