@@ -1,5 +1,3 @@
-"""Streamlit UI for the SPY hedge optimizer with an editable quote grid."""
-
 from __future__ import annotations
 
 import inspect
@@ -331,7 +329,7 @@ def _render_price_card(
     column: str,
     color: str,
     fill: str,
-    key: str,
+    key: str,  # kept for API compatibility, even though we don't use it
 ) -> None:
     if df.empty or column not in df:
         chart_html = """
@@ -486,9 +484,29 @@ def main() -> None:
     st.markdown(
         """
         <p style='color:rgba(230,244,234,0.75); font-size:1.05rem;'>
-        Upload or edit option quotes, configure hedging preferences, and compare
-        Robinhood-inspired risk metrics before sharing a live URL on Streamlit Community Cloud.
+        This app lets you design and evaluate SPY option hedges using live SPY/VIX data
+        and regime-based scenario simulations. Use the tabs below to load your option
+        quotes, set hedging constraints, and compare risk with and without the hedge.
         </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # How-to card (moved up, right under intro)
+    st.markdown(
+        """
+        <div class='shadow-card' style='margin-top:0.75rem;'>
+            <h4 style='margin-bottom:0.4rem;'>How to hedge with this cockpit</h4>
+            <ol style='padding-left:1.2rem; color:rgba(230,244,234,0.8);'>
+                <li>Glance at the live SPY/VIX context and suggested regime to anchor your view on volatility.</li>
+                <li>In <em>Option Quotes</em>, paste or edit your SPY option quotes, matching the contracts you can trade.</li>
+                <li>In <em>Scenario &amp; Constraints</em>, configure the scenario horizon, account permissions, and budget/position limits.</li>
+                <li>In <em>Results</em>, click <strong>Simulate / Optimize</strong> to compare fractional vs. rounded hedges and review payoff &amp; CVaR.</li>
+            </ol>
+            <p style='margin-bottom:0; color:rgba(230,244,234,0.65);'>
+                Adjust quotes or constraints and rerun as market conditions evolve.
+            </p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -543,28 +561,12 @@ def main() -> None:
     else:
         st.warning("Intraday quotes are temporarily unavailable; retry in a moment.")
 
-    # Explanation & how-to cards
+    # Explanation card (kept, but now after chart)
     st.markdown(
         f"""
         <div class='shadow-card' style='margin-top:1rem;'>
             <h4 style='margin-bottom:0.4rem;'>Why {suggested} today?</h4>
             <p style='margin-bottom:0; color:rgba(230,244,234,0.8);'>{regime_reason}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class='shadow-card' style='margin-top:1rem;'>
-            <h4 style='margin-bottom:0.4rem;'>How to hedge with this cockpit</h4>
-            <ol style='padding-left:1.2rem; color:rgba(230,244,234,0.8);'>
-                <li>Use the live SPY/VIX context above to anchor your view on volatility and choose (or override) the regime.</li>
-                <li>Paste or edit your SPY option quotes in the table, matching the contracts you can trade.</li>
-                <li>Configure scenario assumptions and portfolio permissions on the next tab using the hover tips for guidance.</li>
-                <li>Launch <strong>Simulate / Optimize</strong> to compare fractional vs. rounded hedges and review payoff &amp; CVaR.</li>
-            </ol>
-            <p style='margin-bottom:0; color:rgba(230,244,234,0.65);'>Adjust quotes or constraints and rerun as market conditions evolve.</p>
         </div>
         """,
         unsafe_allow_html=True,
