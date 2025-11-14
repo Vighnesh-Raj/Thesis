@@ -258,14 +258,30 @@ def _build_price_sparkline(
     )
 
     fig.update_layout(
-        margin=dict(l=0, r=0, t=10, b=10),
+        margin=dict(l=40, r=10, t=10, b=40),
         hovermode="x unified",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
-        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
         font=dict(family="Inter", color="#E6F4EA"),
-        height=170,
+        height=220,
+        # ✅ Dark hover box so text is readable on your theme
+        hoverlabel=dict(
+            bgcolor="#02140B",
+            font_color="#E6F4EA",
+            bordercolor="#21CE99",
+        ),
+        xaxis=dict(
+            showgrid=False,
+            showticklabels=True,
+            zeroline=False,
+            title="Time",
+        ),
+        yaxis=dict(
+            showgrid=False,
+            showticklabels=True,
+            zeroline=False,
+            title=f"{hover_label} price",
+        ),
     )
     return fig
 
@@ -301,7 +317,7 @@ def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(
         template="plotly_dark",
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=60, r=40, t=10, b=40),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -313,12 +329,19 @@ def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
         plot_bgcolor="rgba(6,18,12,0.8)",
         paper_bgcolor="rgba(6,18,12,0.0)",
         font=dict(family="Inter", color="#E6F4EA"),
+        # ✅ Dark hover box here too
+        hoverlabel=dict(
+            bgcolor="#02140B",
+            font_color="#E6F4EA",
+            bordercolor="#21CE99",
+        ),
     )
     fig.update_yaxes(title_text="SPY", secondary_y=False, color=color_spy)
     fig.update_yaxes(title_text="VIX", secondary_y=True, color=color_vix)
     fig.update_xaxes(title_text="Intraday (Eastern Time)")
 
     return fig
+
 
 
 def _render_price_card(
