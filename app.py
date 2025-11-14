@@ -153,7 +153,6 @@ def load_history(years_back: int = 10):
 
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
-def load_intraday(period: str = "1d", interval: str = "1m") -> pd.DataFrame:
 def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
     if isinstance(data.index, pd.DatetimeIndex):
