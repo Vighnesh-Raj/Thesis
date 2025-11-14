@@ -31,6 +31,7 @@ latest files are on disk and that the dependencies are upgraded:
    `pip install --upgrade -r requirements.txt`
 3. Restart or rerun `streamlit run app.py`. Streamlit caches code aggressively, so a running
    session may need a restart or a browser hard refresh (⌘⇧R / Ctrl+F5) to pick up the new layout.
+The app fetches SPY and VIX history via Yahoo Finance on first load (cached on subsequent runs).
 
 ### Deploy for a free public link
 

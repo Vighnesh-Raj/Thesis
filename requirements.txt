@@ -6,3 +6,4 @@ plotly>=5.20
 scipy>=1.10
 streamlit>=1.33
 streamlit-autorefresh>=0.1.0
+
