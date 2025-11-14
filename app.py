@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import math
 
 import matplotlib.pyplot as plt
@@ -33,6 +34,16 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide",
 )
+
+if "width" in inspect.signature(st.dataframe).parameters:
+    _DATAFRAME_KWARGS = {"width": "stretch"}
+else:
+    _DATAFRAME_KWARGS = {"use_container_width": True}
+
+if "width" in inspect.signature(st.data_editor).parameters:
+    _DATA_EDITOR_KWARGS = {"width": "stretch"}
+else:
+    _DATA_EDITOR_KWARGS = {"use_container_width": True}
 
 
 def _inject_robinhood_styles() -> None:
@@ -567,6 +578,7 @@ def main() -> None:
             working_df,
             num_rows="dynamic",
             hide_index=True,
+            **_DATA_EDITOR_KWARGS,
             width="stretch",
             use_container_width=True,
             column_config={
@@ -808,6 +820,11 @@ def main() -> None:
                     col_lp, col_round = st.columns(2)
                     with col_lp:
                         st.caption("Fractional LP solution")
+                        st.dataframe(lp_df, **_DATAFRAME_KWARGS)
+                        st.metric("LP spend", _format_currency(spend_lp))
+                    with col_round:
+                        st.caption("Rounded (executable) portfolio")
+                        st.dataframe(rounded_df, **_DATAFRAME_KWARGS)
                         st.dataframe(lp_df, width="stretch")
                         st.metric("LP spend", _format_currency(spend_lp))
                     with col_round:
@@ -837,6 +854,7 @@ def main() -> None:
                         }
                     )
                     st.markdown("### Risk Snapshot")
+                    st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
                     st.dataframe(metrics_df, width="stretch")
                     st.dataframe(metrics_df, use_container_width=True)
 
