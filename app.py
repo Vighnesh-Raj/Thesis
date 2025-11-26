@@ -166,14 +166,34 @@ def load_history(years_back: int = 10):
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
 def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
+    """
+    Fetch intraday data and convert timestamps to US/Eastern, then drop tz
+    so the x-axis shows ET wall-clock times instead of UTC.
+    """
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
-    if isinstance(data.index, pd.DatetimeIndex):
+
+    if not isinstance(data.index, pd.DatetimeIndex):
+        return data
+
+    idx = data.index
+    try:
+        # If index is tz-naive, assume UTC then convert; otherwise just convert.
+        if idx.tz is None:
+            idx = idx.tz_localize("UTC").tz_convert("US/Eastern")
+        else:
+            idx = idx.tz_convert("US/Eastern")
+
+        data = data.copy()
+        # Strip timezone but keep ET wall-clock
+        data.index = idx.tz_localize(None)
+    except Exception:
+        # Fallback: at least ensure index is tz-naive
         data = data.copy()
         try:
             data.index = data.index.tz_localize(None)
-        except TypeError:
-            # Already tz-aware or tz-naive
+        except Exception:
             pass
+
     return data
 
 
@@ -282,7 +302,7 @@ def _build_price_sparkline(
             showgrid=False,
             showticklabels=True,
             zeroline=False,
-            title="Time",
+            title="Time (ET)",
         ),
         yaxis=dict(
             showgrid=False,
