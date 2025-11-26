@@ -148,6 +148,15 @@ _inject_robinhood_styles()
 REFRESH_SECONDS = 60
 st_autorefresh(interval=REFRESH_SECONDS * 1000, key="intraday_autorefresh")
 
+# Yahoo-style timeframe options for the price chart
+TIMEFRAME_OPTIONS = {
+    "1D": ("1d", "5m"),
+    "5D": ("5d", "15m"),
+    "1M": ("1mo", "60m"),
+    "6M": ("6mo", "1d"),
+    "1Y": ("1y", "1d"),
+}
+
 
 @st.cache_data(show_spinner=False)
 def load_history(years_back: int = 10):
@@ -264,7 +273,6 @@ def _build_price_sparkline(
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter", color="#E6F4EA"),
         height=220,
-        # ✅ Dark hover box so text is readable on your theme
         hoverlabel=dict(
             bgcolor="#02140B",
             font_color="#E6F4EA",
@@ -329,7 +337,6 @@ def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
         plot_bgcolor="rgba(6,18,12,0.8)",
         paper_bgcolor="rgba(6,18,12,0.0)",
         font=dict(family="Inter", color="#E6F4EA"),
-        # ✅ Dark hover box here too
         hoverlabel=dict(
             bgcolor="#02140B",
             font_color="#E6F4EA",
@@ -338,10 +345,9 @@ def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
     )
     fig.update_yaxes(title_text="SPY", secondary_y=False, color=color_spy)
     fig.update_yaxes(title_text="VIX", secondary_y=True, color=color_vix)
-    fig.update_xaxes(title_text="Intraday (Eastern Time)")
+    fig.update_xaxes(title_text="Time (ET)")
 
     return fig
-
 
 
 def _render_price_card(
@@ -352,7 +358,7 @@ def _render_price_card(
     column: str,
     color: str,
     fill: str,
-    key: str,  # kept for API compatibility, even though we don't use it
+    key: str,  # kept for API compatibility
 ) -> None:
     if df.empty or column not in df:
         chart_html = """
@@ -487,20 +493,14 @@ def main() -> None:
     latest_spy = float(df_reg["SPY"].iloc[-1])
     latest_vix = float(df_reg["VIX"].iloc[-1])
     suggested = suggested_regime_today(df_reg)
-    regime_reason = build_regime_explanation(df_reg, lo, hi)
 
-    # Intraday data (optional)
-    try:
-        intraday_df = load_intraday()
-    except ValueError:
-        intraday_df = pd.DataFrame()
-
-    last_refresh_display = None
-    if not intraday_df.empty:
-        latest_spy = float(intraday_df["SPY"].iloc[-1])
-        latest_vix = float(intraday_df["^VIX"].iloc[-1])
-        last_refresh = pd.Timestamp(intraday_df.index[-1])
-        last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
+    # Base explanation from hedge_app, with small cleanups
+    regime_reason_raw = build_regime_explanation(df_reg, lo, hi)
+    regime_reason = (
+        regime_reason_raw.replace("up -", "-")
+        .replace("down -", "-")
+        .replace("over the last 5 sessions", "over the last 5 trading days")
+    )
 
     # Header
     st.title("🛡️ SPY Hedge Cockpit")
@@ -515,7 +515,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # How-to card (moved up, right under intro)
+    # How-to card (up-front)
     st.markdown(
         """
         <div class='shadow-card' style='margin-top:0.75rem;'>
@@ -533,6 +533,28 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    # --- Timeframe selector (Yahoo-style) for SPY/VIX charts ---
+    timeframe = st.radio(
+        "Price chart window",
+        list(TIMEFRAME_OPTIONS.keys()),
+        index=0,
+        horizontal=True,
+    )
+    period, interval = TIMEFRAME_OPTIONS[timeframe]
+
+    # Intraday / price data
+    try:
+        intraday_df = load_intraday(period=period, interval=interval)
+    except ValueError:
+        intraday_df = pd.DataFrame()
+
+    last_refresh_display = None
+    if not intraday_df.empty:
+        latest_spy = float(intraday_df["SPY"].iloc[-1])
+        latest_vix = float(intraday_df["^VIX"].iloc[-1])
+        last_refresh = pd.Timestamp(intraday_df.index[-1])
+        last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
 
     # Top cards: SPY, VIX, regime
     with st.container():
@@ -573,18 +595,18 @@ def main() -> None:
 
     caption = f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
     if last_refresh_display:
-        caption += f" • Intraday refreshed {last_refresh_display}"
+        caption += f" • Price data refreshed {last_refresh_display}"
     st.caption(caption)
     st.caption("Live SPY and VIX prices update every minute while this session remains open.")
 
-    # Intraday chart
+    # Combined SPY/VIX chart
     if not intraday_df.empty:
         st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
         st.caption("Live SPY/VIX quotes refresh automatically every minute.")
     else:
-        st.warning("Intraday quotes are temporarily unavailable; retry in a moment.")
+        st.warning("Price quotes are temporarily unavailable; retry in a moment.")
 
-    # Explanation card (kept, but now after chart)
+    # Explanation card
     st.markdown(
         f"""
         <div class='shadow-card' style='margin-top:1rem;'>
@@ -776,7 +798,7 @@ def main() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
 
     # -------------------------------------------------------------------------
-    # Tab 2: Results
+    # Tab 2: Results (with persistence across auto-refresh)
     # -------------------------------------------------------------------------
     with tabs[2]:
         st.markdown("<div class='shadow-card'>", unsafe_allow_html=True)
@@ -827,8 +849,6 @@ def main() -> None:
                     pnl = result["pnl"]
                     labels = result["labels"]
 
-                    st.success(f"Regime used: {chosen} | pool size: {len(pool)} days")
-
                     lp_df = pd.DataFrame(
                         {
                             "label": labels,
@@ -846,24 +866,12 @@ def main() -> None:
                         }
                     )
 
-                    spend_lp = lp["spend_usd"]
-                    spend_rounded = rounded["spend"]
+                    spend_lp = float(lp["spend_usd"])
+                    spend_rounded = float(rounded["spend"])
 
-                    st.markdown("### Optimal Allocation")
-                    col_lp, col_round = st.columns(2)
-                    with col_lp:
-                        st.caption("Fractional LP solution")
-                        st.dataframe(lp_df, **_DATAFRAME_KWARGS)
-                        st.metric("LP spend", _format_currency(spend_lp))
-                    with col_round:
-                        st.caption("Rounded (executable) portfolio")
-                        st.dataframe(rounded_df, **_DATAFRAME_KWARGS)
-                        st.metric("Rounded spend", _format_currency(spend_rounded))
-
-                    # Risk metrics
                     alpha_label = f"{alpha:.2f}"
-                    var_unh = np.quantile(-pnl["unhedged"], alpha)
-                    var_hd = np.quantile(-pnl["hedged"], alpha)
+                    var_unh = float(np.quantile(-pnl["unhedged"], alpha))
+                    var_hd = float(np.quantile(-pnl["hedged"], alpha))
 
                     def cvar(series: np.ndarray) -> float:
                         losses = -series
@@ -880,10 +888,7 @@ def main() -> None:
                             f"CVaR@{alpha_label}": [cvar_unh, cvar_hd, cvar_unh - cvar_hd],
                         }
                     )
-                    st.markdown("### Risk Snapshot")
-                    st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
 
-                    # Payoff & PnL distribution
                     payoff_df = _build_payoff_curve(
                         quotes_validated,
                         rounded["buy"],
@@ -891,17 +896,58 @@ def main() -> None:
                         prefs.n_shares,
                         float(df_reg["SPY"].iloc[-1]),
                     )
-                    fig_payoff = _plot_payoff_curve(payoff_df, float(df_reg["SPY"].iloc[-1]))
-                    fig_hist = _plot_pnl_hist(pnl["unhedged"], pnl["hedged"])
 
-                    chart_col1, chart_col2 = st.columns(2)
-                    with chart_col1:
-                        st.pyplot(fig_payoff, use_container_width=True)
-                    with chart_col2:
-                        st.pyplot(fig_hist, use_container_width=True)
+                    # Store everything so results persist across auto-refresh
+                    st.session_state["last_result"] = {
+                        "chosen": chosen,
+                        "pool_size": len(pool),
+                        "lp_df": lp_df,
+                        "rounded_df": rounded_df,
+                        "spend_lp": spend_lp,
+                        "spend_rounded": spend_rounded,
+                        "metrics_df": metrics_df,
+                        "payoff_df": payoff_df,
+                        "unhedged": pnl["unhedged"],
+                        "hedged": pnl["hedged"],
+                        "S0": float(df_reg["SPY"].iloc[-1]),
+                        "alpha_label": alpha_label,
+                    }
 
                 except Exception as exc:  # pylint: disable=broad-except
+                    st.session_state["last_result"] = None
                     st.error(f"{type(exc).__name__}: {exc}")
+
+        # Always try to show the latest successful result
+        result_state = st.session_state.get("last_result")
+
+        if result_state is not None:
+            st.success(
+                f"Regime used: {result_state['chosen']} | "
+                f"pool size: {result_state['pool_size']} days"
+            )
+
+            st.markdown("### Optimal Allocation")
+            col_lp, col_round = st.columns(2)
+            with col_lp:
+                st.caption("Fractional LP solution")
+                st.dataframe(result_state["lp_df"], **_DATAFRAME_KWARGS)
+                st.metric("LP spend", _format_currency(result_state["spend_lp"]))
+            with col_round:
+                st.caption("Rounded (executable) portfolio")
+                st.dataframe(result_state["rounded_df"], **_DATAFRAME_KWARGS)
+                st.metric("Rounded spend", _format_currency(result_state["spend_rounded"]))
+
+            st.markdown("### Risk Snapshot")
+            st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
+
+            fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
+            fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
+
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.pyplot(fig_payoff, use_container_width=True)
+            with chart_col2:
+                st.pyplot(fig_hist, use_container_width=True)
         else:
             st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
 
