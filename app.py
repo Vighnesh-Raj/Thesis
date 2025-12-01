@@ -133,16 +133,6 @@ def _inject_robinhood_styles() -> None:
             box-shadow: 0 25px 40px -12px rgba(33,206,153,0.65);
             transform: translateY(-1px);
         }
-        .price-card-change {
-            font-size: 0.95rem;
-            margin-top: 0.15rem;
-        }
-        .price-card-change.positive {
-            color: #21CE99;
-        }
-        .price-card-change.negative {
-            color: #FF7F50;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -177,7 +167,7 @@ def load_history(years_back: int = 10):
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
 def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
     """
-    Fetch intraday/price data and convert timestamps to US/Eastern, then drop tz
+    Fetch intraday data and convert timestamps to US/Eastern, then drop tz
     so the x-axis shows ET wall-clock times instead of UTC.
     """
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
@@ -384,7 +374,6 @@ def _render_price_card(
     label: str,
     ticker: str,
     price_display: str,
-    change_html: str | None,
     df: pd.DataFrame,
     column: str,
     color: str,
@@ -394,7 +383,7 @@ def _render_price_card(
     if df.empty or column not in df:
         chart_html = """
             <div class='chart-unavailable'>
-                <p>Price data temporarily unavailable.</p>
+                <p>Intraday data temporarily unavailable.</p>
             </div>
         """
         height = 160
@@ -407,9 +396,6 @@ def _render_price_card(
             config={"displayModeBar": False, "responsive": True},
         )
         height = 280
-
-    # change_html is pre-formatted span with positive/negative class or empty.
-    change_html = change_html or ""
 
     components.html(
         f"""
@@ -434,7 +420,7 @@ def _render_price_card(
             .price-card-header {{
                 display: flex;
                 flex-direction: column;
-                gap: 0.15rem;
+                gap: 0.3rem;
             }}
             .price-card-header .label {{
                 font-size: 0.85rem;
@@ -468,7 +454,6 @@ def _render_price_card(
             <div class='price-card-header'>
                 <span class='label'>{label}</span>
                 <span class='value'>{price_display}</span>
-                {change_html}
                 <span class='ticker'>{ticker}</span>
             </div>
             {chart_html}
@@ -527,15 +512,6 @@ def main() -> None:
     df_reg, lo, hi = load_history()
     latest_spy = float(df_reg["SPY"].iloc[-1])
     latest_vix = float(df_reg["VIX"].iloc[-1])
-
-    # Previous close (for $ and % change vs prior trading day)
-    if len(df_reg) >= 2:
-        prev_spy = float(df_reg["SPY"].iloc[-2])
-        prev_vix = float(df_reg["VIX"].iloc[-2])
-    else:
-        prev_spy = latest_spy
-        prev_vix = latest_vix
-
     suggested = suggested_regime_today(df_reg)
 
     # Base explanation from hedge_app, with small cleanups
@@ -600,24 +576,6 @@ def main() -> None:
         last_refresh = pd.Timestamp(intraday_df.index[-1])
         last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
 
-    # --- Build Robinhood-style change strings for SPY & VIX ---
-    def _build_change_html(latest: float, prev: float, label: str) -> str:
-        if prev <= 0 or not np.isfinite(prev):
-            return ""
-        delta = latest - prev
-        pct = (delta / prev) * 100.0
-        sign = "+" if delta >= 0 else "-"
-        delta_abs = abs(delta)
-        pct_abs = abs(pct)
-        cls = "positive" if delta >= 0 else "negative"
-        return (
-            f"<span class='price-card-change {cls}'>"
-            f"{sign}${delta_abs:,.2f} ({pct_abs:.2f}%) vs prior close</span>"
-        )
-
-    spy_change_html = _build_change_html(latest_spy, prev_spy, "SPY")
-    vix_change_html = _build_change_html(latest_vix, prev_vix, "VIX")
-
     # Top cards: SPY, VIX, regime
     with st.container():
         col1, col2, col3 = st.columns([1.15, 1.15, 1], gap="large")
@@ -626,7 +584,6 @@ def main() -> None:
                 label="SPDR S&P 500 ETF",
                 ticker="SPY",
                 price_display=f"${latest_spy:,.2f}",
-                change_html=spy_change_html,
                 df=intraday_df,
                 column="SPY",
                 color="#21CE99",
@@ -638,7 +595,6 @@ def main() -> None:
                 label="CBOE Volatility Index",
                 ticker="VIX",
                 price_display=f"{latest_vix:,.2f}",
-                change_html=vix_change_html,
                 df=intraday_df,
                 column="^VIX",
                 color="#F5A623",
@@ -659,17 +615,14 @@ def main() -> None:
 
     caption = f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
     if last_refresh_display:
-        caption += f" • Price data as of {last_refresh_display}"
+        caption += f" • Price data refreshed {last_refresh_display}"
     st.caption(caption)
-    st.caption(
-        "Indicative SPY/VIX levels based on Yahoo Finance-style data. "
-        "Quotes may be delayed by up to ~15 minutes vs. exchange prices and update here about once per minute."
-    )
+    st.caption("Live SPY and VIX prices update every minute while this session remains open.")
 
     # Combined SPY/VIX chart
     if not intraday_df.empty:
         st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
-        st.caption("Live SPY/VIX quotes refresh automatically every minute (subject to data-provider delay).")
+        st.caption("Live SPY/VIX quotes refresh automatically every minute.")
     else:
         st.warning("Price quotes are temporarily unavailable; retry in a moment.")
 
@@ -1081,3 +1034,17 @@ def main() -> None:
             st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+    # Sidebar
+    st.sidebar.title("Need a public link?")
+    st.sidebar.markdown(
+        "Deploy to **Streamlit Community Cloud** (free) to generate a shareable URL."
+        " Push this repo to GitHub, sign into streamlit.io, and point a new app at `app.py`."
+        " Details in `DEPLOY.md`."
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Made with ❤️ for interactive hedging research.")
+
+
+if __name__ == "__main__":
+    main()
