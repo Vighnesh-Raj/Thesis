@@ -688,6 +688,14 @@ def main() -> None:
             },
         )
 
+        # Download current quotes as CSV
+        st.download_button(
+            "Download current quotes as CSV",
+            data=edited_df.to_csv(index=False),
+            file_name="spy_quotes.csv",
+            mime="text/csv",
+        )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     # -------------------------------------------------------------------------
@@ -738,6 +746,14 @@ def main() -> None:
                 0.95,
                 step=0.01,
                 help="Confidence level for CVaR: lower α focuses on extreme losses, higher α on more typical drawdowns.",
+            )
+            rf_annual = st.number_input(
+                "Risk-free rate (annual, %)",
+                min_value=0.0,
+                max_value=10.0,
+                value=4.0,
+                step=0.25,
+                help="Used for Black–Scholes repricing of option values at the scenario horizon.",
             )
 
         with prefs_col:
@@ -826,6 +842,159 @@ def main() -> None:
 
         run_clicked = st.button("🚀 Simulate / Optimize")
 
+        def _render_results(res_obj: dict):
+            """Render results from stored hedge_result (session or fresh)."""
+
+            lp = res_obj["lp"]
+            rounded = res_obj["rounded"]
+            pnl = res_obj["pnl"]
+            labels = res_obj["labels"]
+            chosen_regime = res_obj.get("regime_used")
+            pool_size = res_obj.get("pool_size")
+            alpha_val = res_obj.get("alpha", 0.95)
+            prefs_obj: Prefs | None = res_obj.get("prefs")
+            quotes_validated = res_obj.get("quotes_validated")
+
+            # Scenario summary line
+            scen_bits = []
+            if prefs_obj is not None:
+                scen_bits.append(f"Horizon: {prefs_obj.horizon}")
+                scen_bits.append(f"Scenarios: {prefs_obj.n_scen}")
+                scen_bits.append(f"α = {alpha_val:.2f}")
+                scen_bits.append(f"r_f ≈ {prefs_obj.risk_free * 100:.2f}%")
+            if chosen_regime is not None:
+                scen_bits.append(f"Regime: {chosen_regime}")
+            if pool_size is not None:
+                scen_bits.append(f"Pool: {pool_size} days")
+            if scen_bits:
+                st.caption(" | ".join(scen_bits))
+
+            lp_df = pd.DataFrame(
+                {
+                    "label": labels,
+                    "buy": np.round(lp["weights"]["buy"], 4),
+                    "sell": np.round(lp["weights"]["sell"], 4),
+                    "net": np.round(lp["weights"]["net"], 4),
+                }
+            )
+            rounded_df = pd.DataFrame(
+                {
+                    "label": labels,
+                    "buy": rounded["buy"],
+                    "sell": rounded["sell"],
+                    "net": rounded["net"],
+                }
+            )
+
+            spend_lp = float(lp["spend_usd"])
+            spend_rounded = float(rounded["spend"])
+
+            st.markdown("### Optimal Allocation")
+            col_lp, col_round = st.columns(2)
+            with col_lp:
+                st.caption("Fractional LP solution")
+                st.dataframe(lp_df, **_DATAFRAME_KWARGS)
+                st.metric("LP spend", _format_currency(spend_lp))
+            with col_round:
+                st.caption("Rounded (executable) portfolio")
+                st.dataframe(rounded_df, **_DATAFRAME_KWARGS)
+                st.metric("Rounded spend", _format_currency(spend_rounded))
+
+            # Per-leg summary (quotes + net positions + approximate notional)
+            if isinstance(quotes_validated, pd.DataFrame):
+                leg_df = quotes_validated.copy()
+                leg_df["buy"] = rounded["buy"]
+                leg_df["sell"] = rounded["sell"]
+                leg_df["net"] = rounded["net"]
+                S0_current = float(df_reg["SPY"].iloc[-1])
+                leg_df["approx_notional_usd"] = (leg_df["net"].abs() * 100.0 * S0_current).round(2)
+
+                st.markdown("#### Per-leg summary")
+                show_cols = [
+                    "label",
+                    "kind",
+                    "strike",
+                    "bid",
+                    "ask",
+                    "mid",
+                    "buy",
+                    "sell",
+                    "net",
+                    "approx_notional_usd",
+                ]
+                show_cols = [c for c in show_cols if c in leg_df.columns]
+                st.dataframe(leg_df[show_cols], **_DATAFRAME_KWARGS)
+
+            # Risk metrics
+            alpha_label = f"{alpha_val:.2f}"
+            var_unh = float(np.quantile(-pnl["unhedged"], alpha_val))
+            var_hd = float(np.quantile(-pnl["hedged"], alpha_val))
+
+            def cvar(series: np.ndarray, a: float) -> float:
+                losses = -series
+                cutoff = np.quantile(losses, a)
+                return float(losses[losses >= cutoff].mean())
+
+            cvar_unh = cvar(pnl["unhedged"], alpha_val)
+            cvar_hd = cvar(pnl["hedged"], alpha_val)
+
+            metrics_df = pd.DataFrame(
+                {
+                    "": ["Unhedged", "Hedged", "Improvement"],
+                    f"VaR@{alpha_label}": [var_unh, var_hd, var_unh - var_hd],
+                    f"CVaR@{alpha_label}": [cvar_unh, cvar_hd, cvar_unh - cvar_hd],
+                }
+            )
+            st.markdown("### Risk Snapshot")
+            st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
+
+            # Tail-loss reduction per dollar
+            tail_improvement = cvar_unh - cvar_hd
+            if spend_rounded != 0:
+                ratio = tail_improvement / spend_rounded
+                st.caption(
+                    f"This hedge reduces CVaR by approximately {_format_currency(tail_improvement)} "
+                    f"for an upfront cost of {_format_currency(spend_rounded)}, "
+                    f"≈ {ratio:.3f} dollars of tail-loss reduction per dollar of premium."
+                )
+            else:
+                st.caption(
+                    f"This hedge changes CVaR by approximately {_format_currency(tail_improvement)} "
+                    "with zero net premium outlay (zero-cost structure)."
+                )
+            if prefs_obj is not None:
+                st.caption(
+                    f"Note: CVaR is computed over bootstrapped SPY/VIX scenarios at horizon "
+                    f"{prefs_obj.horizon} using an annual risk-free rate of {prefs_obj.risk_free * 100:.2f}% "
+                    "and European-style Black–Scholes repricing."
+                )
+
+            # Payoff & PnL distribution
+            if isinstance(quotes_validated, pd.DataFrame):
+                payoff_df = _build_payoff_curve(
+                    quotes_validated,
+                    rounded["buy"],
+                    rounded["sell"],
+                    prefs_obj.n_shares if prefs_obj is not None else 0,
+                    float(df_reg["SPY"].iloc[-1]),
+                )
+                fig_payoff = _plot_payoff_curve(payoff_df, float(df_reg["SPY"].iloc[-1]))
+                fig_hist = _plot_pnl_hist(pnl["unhedged"], pnl["hedged"])
+
+                chart_col1, chart_col2 = st.columns(2)
+                with chart_col1:
+                    st.pyplot(fig_payoff, use_container_width=True)
+                    st.caption(
+                        "Payoff of SPY + hedge at option expiry across terminal SPY prices, "
+                        "net of initial option cost."
+                    )
+                with chart_col2:
+                    st.pyplot(fig_hist, use_container_width=True)
+                    st.caption(
+                        "Histogram of simulated portfolio P&L over the selected horizon. "
+                        "Green = hedged, orange = unhedged; the vertical line at 0 marks break-even."
+                    )
+
         if run_clicked:
             with st.spinner("Running CVaR optimization..."):
                 try:
@@ -847,7 +1016,7 @@ def main() -> None:
                         seed=123,
                         alpha=alpha,
                         n_shares=int(n_shares),
-                        risk_free=0.00,
+                        risk_free=rf_annual / 100.0,
                         retail_mode=retail_mode,
                         allow_selling=allow_selling,
                         zero_cost=zero_cost,
@@ -869,107 +1038,35 @@ def main() -> None:
                     pnl = result["pnl"]
                     labels = result["labels"]
 
-                    lp_df = pd.DataFrame(
-                        {
-                            "label": labels,
-                            "buy": np.round(lp["weights"]["buy"], 4),
-                            "sell": np.round(lp["weights"]["sell"], 4),
-                            "net": np.round(lp["weights"]["net"], 4),
-                        }
-                    )
-                    rounded_df = pd.DataFrame(
-                        {
-                            "label": labels,
-                            "buy": rounded["buy"],
-                            "sell": rounded["sell"],
-                            "net": rounded["net"],
-                        }
-                    )
-
-                    spend_lp = float(lp["spend_usd"])
-                    spend_rounded = float(rounded["spend"])
-
-                    alpha_label = f"{alpha:.2f}"
-                    var_unh = float(np.quantile(-pnl["unhedged"], alpha))
-                    var_hd = float(np.quantile(-pnl["hedged"], alpha))
-
-                    def cvar(series: np.ndarray) -> float:
-                        losses = -series
-                        cutoff = np.quantile(losses, alpha)
-                        return float(losses[losses >= cutoff].mean())
-
-                    cvar_unh = cvar(pnl["unhedged"])
-                    cvar_hd = cvar(pnl["hedged"])
-
-                    metrics_df = pd.DataFrame(
-                        {
-                            "": ["Unhedged", "Hedged", "Improvement"],
-                            f"VaR@{alpha_label}": [var_unh, var_hd, var_unh - var_hd],
-                            f"CVaR@{alpha_label}": [cvar_unh, cvar_hd, cvar_unh - cvar_hd],
-                        }
-                    )
-
-                    payoff_df = _build_payoff_curve(
-                        quotes_validated,
-                        rounded["buy"],
-                        rounded["sell"],
-                        prefs.n_shares,
-                        float(df_reg["SPY"].iloc[-1]),
-                    )
-
-                    # Store everything so results persist across auto-refresh
-                    st.session_state["last_result"] = {
-                        "chosen": chosen,
+                    # Persist result in session_state so auto-refresh doesn't wipe it
+                    st.session_state["hedge_result"] = {
+                        "lp": lp,
+                        "rounded": rounded,
+                        "pnl": pnl,
+                        "labels": labels,
+                        "regime_used": chosen,
                         "pool_size": len(pool),
-                        "lp_df": lp_df,
-                        "rounded_df": rounded_df,
-                        "spend_lp": spend_lp,
-                        "spend_rounded": spend_rounded,
-                        "metrics_df": metrics_df,
-                        "payoff_df": payoff_df,
-                        "unhedged": pnl["unhedged"],
-                        "hedged": pnl["hedged"],
-                        "S0": float(df_reg["SPY"].iloc[-1]),
-                        "alpha_label": alpha_label,
+                        "quotes_validated": quotes_validated,
+                        "prefs": prefs,
+                        "alpha": alpha,
                     }
 
+                    st.success(f"Regime used: {chosen} | pool size: {len(pool)} days")
+                    _render_results(st.session_state["hedge_result"])
+
                 except Exception as exc:  # pylint: disable=broad-except
-                    st.session_state["last_result"] = None
+                    st.session_state["hedge_result"] = None
                     st.error(f"{type(exc).__name__}: {exc}")
-
-        # Always try to show the latest successful result
-        result_state = st.session_state.get("last_result")
-
-        if result_state is not None:
-            st.success(
-                f"Regime used: {result_state['chosen']} | "
-                f"pool size: {result_state['pool_size']} days"
-            )
-
-            st.markdown("### Optimal Allocation")
-            col_lp, col_round = st.columns(2)
-            with col_lp:
-                st.caption("Fractional LP solution")
-                st.dataframe(result_state["lp_df"], **_DATAFRAME_KWARGS)
-                st.metric("LP spend", _format_currency(result_state["spend_lp"]))
-            with col_round:
-                st.caption("Rounded (executable) portfolio")
-                st.dataframe(result_state["rounded_df"], **_DATAFRAME_KWARGS)
-                st.metric("Rounded spend", _format_currency(result_state["spend_rounded"]))
-
-            st.markdown("### Risk Snapshot")
-            st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
-
-            fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
-            fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
-
-            chart_col1, chart_col2 = st.columns(2)
-            with chart_col1:
-                st.pyplot(fig_payoff, use_container_width=True)
-            with chart_col2:
-                st.pyplot(fig_hist, use_container_width=True)
         else:
-            st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
+            # If user hasn't clicked this run, try to show last stored result
+            if "hedge_result" in st.session_state and st.session_state["hedge_result"] is not None:
+                st.info(
+                    "Showing the most recent hedge result. "
+                    "Adjust inputs and click **Simulate / Optimize** to recompute."
+                )
+                _render_results(st.session_state["hedge_result"])
+            else:
+                st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
