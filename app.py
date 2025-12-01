@@ -210,7 +210,7 @@ def _format_currency(value: float) -> str:
 
 
 def _format_change_line(last: float, first: float, unit: str = "$") -> str:
-    """Format change as '▲ +$1.23 (+0.45%) since period start'."""
+    """Format change as '▲ +$1.23 (+0.45%)'"""
     try:
         if first is None or np.isnan(first) or first == 0:
             return "Change data unavailable"
@@ -223,7 +223,7 @@ def _format_change_line(last: float, first: float, unit: str = "$") -> str:
     sign_delta = "+" if delta > 0 else "" if delta < 0 else ""
     sign_pct = "+" if pct > 0 else "" if pct < 0 else ""
     unit_prefix = unit if unit else ""
-    return f"{arrow} {sign_delta}{unit_prefix}{abs(delta):.2f} ({sign_pct}{abs(pct):.2f}%) since period start"
+    return f"{arrow} {sign_delta}{unit_prefix}{abs(delta):.2f} ({sign_pct}{abs(pct):.2f}%)"
 
 
 def _build_payoff_curve(
