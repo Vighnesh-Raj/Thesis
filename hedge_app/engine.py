@@ -21,7 +21,7 @@ class Prefs:
     seed: int = 123
     alpha: float = 0.95
     n_shares: int = 20
-    risk_free: float = 0.00
+    risk_free: float = 0.04
 
     # Permissions (toggles)
     retail_mode: bool = True
@@ -153,7 +153,7 @@ def optimize_hedge(
     seed: int = 123,
     alpha: float = 0.95,
     n_shares: int = 20,
-    risk_free: float = 0.00,
+    risk_free: float = 0.04,
     zero_cost: bool = False,
     budget_usd: float = 200.0,
     allow_net_credit: bool = False,
