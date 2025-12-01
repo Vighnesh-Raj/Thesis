@@ -88,12 +88,6 @@ def _inject_robinhood_styles() -> None:
             margin-bottom: 0.35rem;
             color: #21CE99;
         }
-        .regime-card .regime-reason {
-            font-size: 0.95rem;
-            line-height: 1.45;
-            color: rgba(230,244,234,0.78);
-            margin-top: 0.35rem;
-        }
         .shadow-card {
             background: rgba(6,18,12,0.8);
             border-radius: 18px;
@@ -215,6 +209,23 @@ def _format_currency(value: float) -> str:
     return f"{sign}${abs(value):,.2f}"
 
 
+def _format_change_line(last: float, first: float, unit: str = "$") -> str:
+    """Format change as '▲ +$1.23 (+0.45%) since period start'."""
+    try:
+        if first is None or np.isnan(first) or first == 0:
+            return "Change data unavailable"
+    except TypeError:
+        return "Change data unavailable"
+
+    delta = last - first
+    pct = (delta / first) * 100.0
+    arrow = "▲" if delta > 0 else "▼" if delta < 0 else "●"
+    sign_delta = "+" if delta > 0 else "" if delta < 0 else ""
+    sign_pct = "+" if pct > 0 else "" if pct < 0 else ""
+    unit_prefix = unit if unit else ""
+    return f"{arrow} {sign_delta}{unit_prefix}{abs(delta):.2f} ({sign_pct}{abs(pct):.2f}%) since period start"
+
+
 def _build_payoff_curve(
     quotes: pd.DataFrame,
     buy: np.ndarray,
@@ -244,74 +255,6 @@ def _build_payoff_curve(
     total = shares_leg + np.array(payoff) - init_cost
 
     return pd.DataFrame({"SPY": S_grid, "Total": total})
-
-
-def _build_price_sparkline(
-    df: pd.DataFrame,
-    column: str,
-    color: str,
-    fill: str,
-    hover_label: str,
-) -> go.Figure:
-    fig = go.Figure()
-    if df.empty or column not in df:
-        return fig
-
-    series = df[column].astype(float)
-
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=series,
-            mode="lines",
-            line=dict(color=color, width=2.4),
-            fill="tozeroy",
-            fillcolor=fill,
-            hovertemplate="%{x|%b %d %I:%M %p}<br>"
-            f"{hover_label}: "
-            "%{y:.2f}<extra></extra>",
-            name=hover_label,
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=[df.index[-1]],
-            y=[series.iloc[-1]],
-            mode="markers",
-            marker=dict(size=9, color="#E6F4EA", line=dict(color=color, width=2)),
-            hovertemplate="%{x|%b %d %I:%M %p}<br>"
-            f"{hover_label}: "
-            "%{y:.2f}<extra></extra>",
-            showlegend=False,
-        )
-    )
-
-    fig.update_layout(
-        margin=dict(l=40, r=10, t=10, b=40),
-        hovermode="x unified",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter", color="#E6F4EA"),
-        height=220,
-        hoverlabel=dict(
-            bgcolor="#02140B",
-            font_color="#E6F4EA",
-            bordercolor="#21CE99",
-        ),
-        xaxis=dict(
-            showgrid=False,
-            showticklabels=True,
-            zeroline=False,
-            title="Time (ET)",
-        ),
-        yaxis=dict(
-            showgrid=False,
-            showticklabels=True,
-            zeroline=False,
-            title=f"{hover_label} price",
-        ),
-    )
-    return fig
 
 
 def _build_intraday_chart(df: pd.DataFrame) -> go.Figure:
@@ -374,29 +317,9 @@ def _render_price_card(
     label: str,
     ticker: str,
     price_display: str,
-    df: pd.DataFrame,
-    column: str,
-    color: str,
-    fill: str,
-    key: str,  # kept for API compatibility
+    change_display: str,
 ) -> None:
-    if df.empty or column not in df:
-        chart_html = """
-            <div class='chart-unavailable'>
-                <p>Intraday data temporarily unavailable.</p>
-            </div>
-        """
-        height = 160
-    else:
-        fig = _build_price_sparkline(df, column, color=color, fill=fill, hover_label=ticker)
-        chart_html = pio.to_html(
-            fig,
-            include_plotlyjs="cdn",
-            full_html=False,
-            config={"displayModeBar": False, "responsive": True},
-        )
-        height = 280
-
+    """Simple stat card: big price + smaller change line, no mini-chart."""
     components.html(
         f"""
         <style>
@@ -415,12 +338,12 @@ def _render_price_card(
                 border-radius: 18px;
                 border: 1px solid rgba(33,206,153,0.22);
                 box-shadow: 0 30px 45px -28px rgba(33,206,153,0.55);
-                padding: 1.15rem 1.25rem 0.55rem;
+                padding: 1.15rem 1.25rem 0.95rem;
             }}
             .price-card-header {{
                 display: flex;
                 flex-direction: column;
-                gap: 0.3rem;
+                gap: 0.25rem;
             }}
             .price-card-header .label {{
                 font-size: 0.85rem;
@@ -438,16 +361,9 @@ def _render_price_card(
                 font-size: 0.92rem;
                 color: rgba(230,244,234,0.6);
             }}
-            .chart-unavailable {{
-                margin-top: 0.75rem;
-                padding: 0.75rem 0.85rem;
-                background: rgba(3,9,6,0.65);
-                border-radius: 14px;
-                font-size: 0.9rem;
-                color: rgba(230,244,234,0.75);
-            }}
-            .chart-unavailable p {{
-                margin: 0;
+            .price-card-header .change {{
+                font-size: 0.95rem;
+                color: rgba(230,244,234,0.85);
             }}
         </style>
         <div class='price-card-wrapper'>
@@ -455,11 +371,11 @@ def _render_price_card(
                 <span class='label'>{label}</span>
                 <span class='value'>{price_display}</span>
                 <span class='ticker'>{ticker}</span>
+                <span class='change'>{change_display}</span>
             </div>
-            {chart_html}
         </div>
         """,
-        height=height,
+        height=150,
         scrolling=False,
     )
 
@@ -554,14 +470,11 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # --- Timeframe selector (Yahoo-style) for SPY/VIX charts ---
-    timeframe = st.radio(
-        "Price chart window",
-        list(TIMEFRAME_OPTIONS.keys()),
-        index=0,
-        horizontal=True,
-    )
-    period, interval = TIMEFRAME_OPTIONS[timeframe]
+    # --- Determine current timeframe from session_state (for cards & chart) ---
+    current_tf = st.session_state.get("price_window", "1D")
+    if current_tf not in TIMEFRAME_OPTIONS:
+        current_tf = "1D"
+    period, interval = TIMEFRAME_OPTIONS[current_tf]
 
     # Intraday / price data
     try:
@@ -570,9 +483,19 @@ def main() -> None:
         intraday_df = pd.DataFrame()
 
     last_refresh_display = None
+    spy_change_display = "Change data unavailable"
+    vix_change_display = "Change data unavailable"
+
     if not intraday_df.empty:
         latest_spy = float(intraday_df["SPY"].iloc[-1])
         latest_vix = float(intraday_df["^VIX"].iloc[-1])
+
+        first_spy = float(intraday_df["SPY"].iloc[0])
+        first_vix = float(intraday_df["^VIX"].iloc[0])
+
+        spy_change_display = _format_change_line(latest_spy, first_spy, unit="$")
+        vix_change_display = _format_change_line(latest_vix, first_vix, unit="")
+
         last_refresh = pd.Timestamp(intraday_df.index[-1])
         last_refresh_display = last_refresh.strftime("%b %d %I:%M %p ET")
 
@@ -584,22 +507,14 @@ def main() -> None:
                 label="SPDR S&P 500 ETF",
                 ticker="SPY",
                 price_display=f"${latest_spy:,.2f}",
-                df=intraday_df,
-                column="SPY",
-                color="#21CE99",
-                fill="rgba(33,206,153,0.28)",
-                key="spy-price-card",
+                change_display=spy_change_display,
             )
         with col2:
             _render_price_card(
                 label="CBOE Volatility Index",
                 ticker="VIX",
                 price_display=f"{latest_vix:,.2f}",
-                df=intraday_df,
-                column="^VIX",
-                color="#F5A623",
-                fill="rgba(245,166,35,0.28)",
-                key="vix-price-card",
+                change_display=vix_change_display,
             )
         with col3:
             st.markdown(
@@ -607,26 +522,12 @@ def main() -> None:
                 <div class='metric-card regime-card'>
                     <h3>Suggested Regime</h3>
                     <p>{suggested}</p>
-                    <div class='regime-reason'>{regime_reason}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    caption = f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
-    if last_refresh_display:
-        caption += f" • Price data refreshed {last_refresh_display}"
-    st.caption(caption)
-    st.caption("Live SPY and VIX prices update every minute while this session remains open.")
-
-    # Combined SPY/VIX chart
-    if not intraday_df.empty:
-        st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
-        st.caption("Live SPY/VIX quotes refresh automatically every minute.")
-    else:
-        st.warning("Price quotes are temporarily unavailable; retry in a moment.")
-
-    # Explanation card
+    # Explanation card for regime, then cutoffs + refresh text
     st.markdown(
         f"""
         <div class='shadow-card' style='margin-top:1rem;'>
@@ -636,6 +537,31 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    st.caption(
+        f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
+    )
+    if last_refresh_display:
+        st.caption(f"Price data refreshed at {last_refresh_display}")
+    st.caption("SPY/VIX quotes may be displayed with a delay of up to 15 minutes relative to live market prices.")
+
+    # Combined SPY/VIX chart + timeframe selector (under cards, above chart)
+    with st.container():
+        timeframe = st.radio(
+            "Price chart window",
+            list(TIMEFRAME_OPTIONS.keys()),
+            index=list(TIMEFRAME_OPTIONS.keys()).index(current_tf),
+            horizontal=True,
+            key="price_window",
+        )
+
+        # If user changed timeframe, the script will rerun with new state on next run.
+        # For this run, we still use intraday_df computed above, which matches current_tf.
+
+        if not intraday_df.empty:
+            st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
+        else:
+            st.warning("Price quotes are temporarily unavailable; retry in a moment.")
 
     st.markdown("---")
 
@@ -839,212 +765,4 @@ def main() -> None:
                     if regime_mode.startswith("Auto"):
                         chosen, pool = select_regime_pool(df_reg, mode="auto")
                     else:
-                        chosen, pool = select_regime_pool(df_reg, mode="manual", override=override)
-
-                    prefs = Prefs(
-                        horizon=horizon,
-                        n_scen=n_scen,
-                        seed=123,
-                        alpha=alpha,
-                        n_shares=int(n_shares),
-                        risk_free=0.04,  # 4% annual risk-free rate
-                        retail_mode=retail_mode,
-                        allow_selling=allow_selling,
-                        zero_cost=zero_cost,
-                        allow_net_credit=allow_net_credit,
-                        budget_usd=float(budget_usd),
-                        max_buy_contracts=float(max_buy),
-                        max_sell_contracts=float(max_sell),
-                        integer_round=integer_round,
-                        step=float(step),
-                        budget_enforced_after_rounding=keep_budget,
-                        zero_cost_tolerance=float(zc_tol),
-                        make_plots=False,
-                    )
-
-                    result = run_hedge_workflow(quotes_validated, df_reg, pool, prefs)
-
-                    lp = result["lp_result"]
-                    rounded = result["rounded"]
-                    pnl = result["pnl"]
-                    labels = result["labels"]
-
-                    lp_df = pd.DataFrame(
-                        {
-                            "label": labels,
-                            "buy": np.round(lp["weights"]["buy"], 4),
-                            "sell": np.round(lp["weights"]["sell"], 4),
-                            "net": np.round(lp["weights"]["net"], 4),
-                        }
-                    )
-                    rounded_df = pd.DataFrame(
-                        {
-                            "label": labels,
-                            "buy": rounded["buy"],
-                            "sell": rounded["sell"],
-                            "net": rounded["net"],
-                        }
-                    )
-
-                    spend_lp = float(lp["spend_usd"])
-                    spend_rounded = float(rounded["spend"])
-
-                    alpha_label = f"{alpha:.2f}"
-                    var_unh = float(np.quantile(-pnl["unhedged"], alpha))
-                    var_hd = float(np.quantile(-pnl["hedged"], alpha))
-
-                    def cvar(series: np.ndarray) -> float:
-                        losses = -series
-                        cutoff = np.quantile(losses, alpha)
-                        return float(losses[losses >= cutoff].mean())
-
-                    cvar_unh = cvar(pnl["unhedged"])
-                    cvar_hd = cvar(pnl["hedged"])
-
-                    metrics_df = pd.DataFrame(
-                        {
-                            "": ["Unhedged", "Hedged", "Improvement"],
-                            f"VaR@{alpha_label}": [var_unh, var_hd, var_unh - var_hd],
-                            f"CVaR@{alpha_label}": [cvar_unh, cvar_hd, cvar_unh - cvar_hd],
-                        }
-                    )
-
-                    payoff_df = _build_payoff_curve(
-                        quotes_validated,
-                        rounded["buy"],
-                        rounded["sell"],
-                        prefs.n_shares,
-                        float(df_reg["SPY"].iloc[-1]),
-                    )
-
-                    # Store everything so results persist across auto-refresh
-                    st.session_state["last_result"] = {
-                        "chosen": chosen,
-                        "pool_size": len(pool),
-                        "lp_df": lp_df,
-                        "rounded_df": rounded_df,
-                        "spend_lp": spend_lp,
-                        "spend_rounded": spend_rounded,
-                        "metrics_df": metrics_df,
-                        "payoff_df": payoff_df,
-                        "unhedged": pnl["unhedged"],
-                        "hedged": pnl["hedged"],
-                        "S0": float(df_reg["SPY"].iloc[-1]),
-                        "alpha_label": alpha_label,
-                    }
-
-                except Exception as exc:  # pylint: disable=broad-except
-                    st.session_state["last_result"] = None
-                    st.error(f"{type(exc).__name__}: {exc}")
-
-        # Always try to show the latest successful result
-        result_state = st.session_state.get("last_result")
-
-        if result_state is not None:
-            st.success(
-                f"Regime used: {result_state['chosen']} | "
-                f"pool size: {result_state['pool_size']} days"
-            )
-
-            # --- Optimal allocation tables + explanation ---
-            st.markdown("### Optimal Allocation")
-            col_lp, col_round = st.columns(2)
-            with col_lp:
-                st.caption("Fractional LP solution (ideal, can include fractional contracts)")
-                st.dataframe(result_state["lp_df"], **_DATAFRAME_KWARGS)
-                st.metric("LP spend", _format_currency(result_state["spend_lp"]))
-            with col_round:
-                st.caption("Rounded (executable) portfolio (what a real account can trade)")
-                st.dataframe(result_state["rounded_df"], **_DATAFRAME_KWARGS)
-                st.metric("Rounded spend", _format_currency(result_state["spend_rounded"]))
-
-            st.markdown(
-                """
-                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                <strong>How to read this:</strong> Each row is an option contract. The fractional LP solution is the
-                mathematically optimal hedge if you could trade fractions of contracts. The rounded portfolio is the
-                version you can actually trade (whole contracts), keeping as close as possible to the optimal hedge and
-                your budget / zero-cost settings.
-                </p>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            # --- Risk Snapshot + explanation ---
-            st.markdown("### Risk Snapshot")
-            st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
-            st.markdown(
-                f"""
-                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                <strong>How to read this:</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level:
-                with probability about {float(result_state['alpha_label']):.0%}, losses should be smaller than this number.
-                CVaR@{result_state['alpha_label']} is the <em>average</em> loss in those worst-case days.<br>
-                The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus doing nothing.
-                Bigger positive numbers in that row mean your hedge is cutting more downside tail risk.
-                </p>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            # --- Charts + explanation ---
-            fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
-            fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
-
-            chart_col1, chart_col2 = st.columns(2)
-            with chart_col1:
-                st.pyplot(fig_payoff, use_container_width=True)
-                st.markdown(
-                    """
-                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                    <strong>Payoff at Expiry:</strong> This curve shows how your combined SPY position
-                    (shares + hedge) behaves at option expiry for different possible SPY prices. The vertical line marks
-                    today’s SPY level. Points above zero mean profit; points below zero mean loss. The flatter and
-                    higher the line on the left side, the more protection you have against large market drops.
-                    </p>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with chart_col2:
-                st.pyplot(fig_hist, use_container_width=True)
-                st.markdown(
-                    """
-                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                    <strong>Scenario P&amp;L Distribution:</strong> Each bar shows how often a particular profit or
-                    loss level appears across all simulated scenarios. The orange bars are your P&amp;L without any
-                    hedge. The green bars are with the hedge applied. A good hedge pulls the green distribution to the
-                    right (fewer big losses) and makes the left tail (very bad outcomes) much smaller.
-                    </p>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            # High-level takeaway
-            st.markdown(
-                """
-                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.6rem;">
-                <strong>Big picture:</strong> If the rounded portfolio still meaningfully lowers VaR and CVaR and
-                the green histogram has a much smaller left tail than the orange one, your hedge is doing its job:
-                trading some upside or premium cost today for smaller potential downside in a bad week or month.
-                </p>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        else:
-            st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Sidebar
-    st.sidebar.title("Need a public link?")
-    st.sidebar.markdown(
-        "Deploy to **Streamlit Community Cloud** (free) to generate a shareable URL."
-        " Push this repo to GitHub, sign into streamlit.io, and point a new app at `app.py`."
-        " Details in `DEPLOY.md`."
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Made with ❤️ for interactive hedging research.")
-
-
-if __name__ == "__main__":
-    main()
+                        chosen, pool =
