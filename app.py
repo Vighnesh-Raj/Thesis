@@ -29,8 +29,8 @@ from hedge_app import (
 # -----------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="SPY Hedge Cockpit",
-    page_icon="🛡️",
+    page_title="SPY Risk Management App",
+    page_icon="",
     layout="wide",
 )
 
@@ -162,7 +162,7 @@ def load_history(years_back: int = 10):
 def load_intraday(period: str = "5d", interval: str = "5m") -> pd.DataFrame:
     """
     Fetch intraday data and convert timestamps to US/Eastern, then drop tz
-    so the x-axis shows ET wall-clock times instead of UTC.
+    so the x-axis shows ET times instead of UTC.
     """
     data = fetch_intraday_quotes(symbols=("SPY", "^VIX"), period=period, interval=interval)
 
@@ -319,7 +319,7 @@ def _render_price_card(
     price_display: str,
     change_display: str,
 ) -> None:
-    """Simple stat card: big price + smaller change line, no mini-chart."""
+    """Simple stat card: big price + smaller change line"""
     components.html(
         f"""
         <style>
@@ -765,4 +765,204 @@ def main() -> None:
                     if regime_mode.startswith("Auto"):
                         chosen, pool = select_regime_pool(df_reg, mode="auto")
                     else:
-                        chosen, pool =
+                        chosen, pool = select_regime_pool(df_reg, mode="manual", override=override)
+
+                    prefs = Prefs(
+                        horizon=horizon,
+                        n_scen=n_scen,
+                        seed=123,
+                        alpha=alpha,
+                        n_shares=int(n_shares),
+                        risk_free=0.04,  # 4% annual risk-free rate
+                        retail_mode=retail_mode,
+                        allow_selling=allow_selling,
+                        zero_cost=zero_cost,
+                        allow_net_credit=allow_net_credit,
+                        budget_usd=float(budget_usd),
+                        max_buy_contracts=float(max_buy),
+                        max_sell_contracts=float(max_sell),
+                        integer_round=integer_round,
+                        step=float(step),
+                        budget_enforced_after_rounding=keep_budget,
+                        zero_cost_tolerance=float(zc_tol),
+                        make_plots=False,
+                    )
+
+                    result = run_hedge_workflow(quotes_validated, df_reg, pool, prefs)
+
+                    lp = result["lp_result"]
+                    rounded = result["rounded"]
+                    pnl = result["pnl"]
+                    labels = result["labels"]
+
+                    lp_df = pd.DataFrame(
+                        {
+                            "label": labels,
+                            "buy": np.round(lp["weights"]["buy"], 4),
+                            "sell": np.round(lp["weights"]["sell"], 4),
+                            "net": np.round(lp["weights"]["net"], 4),
+                        }
+                    )
+                    rounded_df = pd.DataFrame(
+                        {
+                            "label": labels,
+                            "buy": rounded["buy"],
+                            "sell": rounded["sell"],
+                            "net": rounded["net"],
+                        }
+                    )
+
+                    spend_lp = float(lp["spend_usd"])
+                    spend_rounded = float(rounded["spend"])
+
+                    alpha_label = f"{alpha:.2f}"
+                    var_unh = float(np.quantile(-pnl["unhedged"], alpha))
+                    var_hd = float(np.quantile(-pnl["hedged"], alpha))
+
+                    def cvar(series: np.ndarray) -> float:
+                        losses = -series
+                        cutoff = np.quantile(losses, alpha)
+                        return float(losses[losses >= cutoff].mean())
+
+                    cvar_unh = cvar(pnl["unhedged"])
+                    cvar_hd = cvar(pnl["hedged"])
+
+                    metrics_df = pd.DataFrame(
+                        {
+                            "": ["Unhedged", "Hedged", "Improvement"],
+                            f"VaR@{alpha_label}": [var_unh, var_hd, var_unh - var_hd],
+                            f"CVaR@{alpha_label}": [cvar_unh, cvar_hd, cvar_unh - cvar_hd],
+                        }
+                    )
+
+                    payoff_df = _build_payoff_curve(
+                        quotes_validated,
+                        rounded["buy"],
+                        rounded["sell"],
+                        prefs.n_shares,
+                        float(df_reg["SPY"].iloc[-1]),
+                    )
+
+                    # Store everything so results persist across auto-refresh
+                    st.session_state["last_result"] = {
+                        "chosen": chosen,
+                        "pool_size": len(pool),
+                        "lp_df": lp_df,
+                        "rounded_df": rounded_df,
+                        "spend_lp": spend_lp,
+                        "spend_rounded": spend_rounded,
+                        "metrics_df": metrics_df,
+                        "payoff_df": payoff_df,
+                        "unhedged": pnl["unhedged"],
+                        "hedged": pnl["hedged"],
+                        "S0": float(df_reg["SPY"].iloc[-1]),
+                        "alpha_label": alpha_label,
+                    }
+
+                except Exception as exc:  # pylint: disable=broad-except
+                    st.session_state["last_result"] = None
+                    st.error(f"{type(exc).__name__}: {exc}")
+
+        # Always try to show the latest successful result
+        result_state = st.session_state.get("last_result")
+
+        if result_state is not None:
+            st.success(
+                f"Regime used: {result_state['chosen']} | "
+                f"pool size: {result_state['pool_size']} days"
+            )
+
+            # --- Optimal allocation tables + explanation ---
+            st.markdown("### Optimal Allocation")
+            col_lp, col_round = st.columns(2)
+            with col_lp:
+                st.caption("Fractional LP solution (ideal, can include fractional contracts)")
+                st.dataframe(result_state["lp_df"], **_DATAFRAME_KWARGS)
+                st.metric("LP spend", _format_currency(result_state["spend_lp"]))
+            with col_round:
+                st.caption("Rounded (executable) portfolio (what a real account can trade)")
+                st.dataframe(result_state["rounded_df"], **_DATAFRAME_KWARGS)
+                st.metric("Rounded spend", _format_currency(result_state["spend_rounded"]))
+
+            st.markdown(
+                """
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                <strong>How to read this:</strong> Each row is an option contract. The fractional LP solution is the
+                mathematically optimal hedge if you could trade fractions of contracts. The rounded portfolio is the
+                version you can actually trade (whole contracts), keeping as close as possible to the optimal hedge and
+                your budget / zero-cost settings.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # --- Risk Snapshot + explanation ---
+            st.markdown("### Risk Snapshot")
+            st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
+            st.markdown(
+                f"""
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                <strong>How to read this:</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level:
+                with probability about {float(result_state['alpha_label']):.0%}, losses should be smaller than this number.
+                CVaR@{result_state['alpha_label']} is the <em>average</em> loss in those worst-case days.<br>
+                The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus doing nothing.
+                Bigger positive numbers in that row mean your hedge is cutting more downside tail risk.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # --- Charts + explanation ---
+            fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
+            fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
+
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.pyplot(fig_payoff, use_container_width=True)
+                st.markdown(
+                    """
+                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                    <strong>Payoff at Expiry:</strong> This curve shows how your combined SPY position
+                    (shares + hedge) behaves at option expiry for different possible SPY prices. The vertical line marks
+                    today’s SPY level. Points above zero mean profit; points below zero mean loss. The flatter and
+                    higher the line on the left side, the more protection you have against large market drops.
+                    </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with chart_col2:
+                st.pyplot(fig_hist, use_container_width=True)
+                st.markdown(
+                    """
+                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                    <strong>Scenario P&amp;L Distribution:</strong> Each bar shows how often a particular profit or
+                    loss level appears across all simulated scenarios. The orange bars are your P&amp;L without any
+                    hedge. The green bars are with the hedge applied. A good hedge pulls the green distribution to the
+                    right (fewer big losses) and makes the left tail (very bad outcomes) much smaller.
+                    </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            # High-level takeaway
+            st.markdown(
+                """
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.6rem;">
+                <strong>Big picture:</strong> If the rounded portfolio still meaningfully lowers VaR and CVaR and
+                the green histogram has a much smaller left tail than the orange one, your hedge is doing its job:
+                trading some upside or premium cost today for smaller potential downside in a bad week or month.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        else:
+            st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+
+if __name__ == "__main__":
+    main()
