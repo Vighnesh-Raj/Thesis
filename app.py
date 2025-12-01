@@ -894,7 +894,7 @@ def main() -> None:
                         seed=123,
                         alpha=alpha,
                         n_shares=int(n_shares),
-                        risk_free=0.00,  # risk-free is handled in hedge engine; adjust there if needed
+                        risk_free=0.04,  # 4% annual risk-free rate
                         retail_mode=retail_mode,
                         allow_selling=allow_selling,
                         zero_cost=zero_cost,
@@ -993,43 +993,91 @@ def main() -> None:
                 f"pool size: {result_state['pool_size']} days"
             )
 
+            # --- Optimal allocation tables + explanation ---
             st.markdown("### Optimal Allocation")
             col_lp, col_round = st.columns(2)
             with col_lp:
-                st.caption("Fractional LP solution")
+                st.caption("Fractional LP solution (ideal, can include fractional contracts)")
                 st.dataframe(result_state["lp_df"], **_DATAFRAME_KWARGS)
                 st.metric("LP spend", _format_currency(result_state["spend_lp"]))
             with col_round:
-                st.caption("Rounded (executable) portfolio")
+                st.caption("Rounded (executable) portfolio (what a real account can trade)")
                 st.dataframe(result_state["rounded_df"], **_DATAFRAME_KWARGS)
                 st.metric("Rounded spend", _format_currency(result_state["spend_rounded"]))
 
+            st.markdown(
+                """
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                <strong>How to read this:</strong> Each row is an option contract. The fractional LP solution is the
+                mathematically optimal hedge if you could trade fractions of contracts. The rounded portfolio is the
+                version you can actually trade (whole contracts), keeping as close as possible to the optimal hedge and
+                your budget / zero-cost settings.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # --- Risk Snapshot + explanation ---
             st.markdown("### Risk Snapshot")
             st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
+            st.markdown(
+                f"""
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                <strong>How to read this:</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level:
+                with probability about {float(result_state['alpha_label']):.0%}, losses should be smaller than this number.
+                CVaR@{result_state['alpha_label']} is the <em>average</em> loss in those worst-case days.<br>
+                The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus doing nothing.
+                Bigger positive numbers in that row mean your hedge is cutting more downside tail risk.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
 
+            # --- Charts + explanation ---
             fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
             fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
 
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
                 st.pyplot(fig_payoff, use_container_width=True)
+                st.markdown(
+                    """
+                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                    <strong>Payoff at Expiry:</strong> This curve shows how your combined SPY position
+                    (shares + hedge) behaves at option expiry for different possible SPY prices. The vertical line marks
+                    today’s SPY level. Points above zero mean profit; points below zero mean loss. The flatter and
+                    higher the line on the left side, the more protection you have against large market drops.
+                    </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
             with chart_col2:
                 st.pyplot(fig_hist, use_container_width=True)
+                st.markdown(
+                    """
+                    <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
+                    <strong>Scenario P&amp;L Distribution:</strong> Each bar shows how often a particular profit or
+                    loss level appears across all simulated scenarios. The orange bars are your P&amp;L without any
+                    hedge. The green bars are with the hedge applied. A good hedge pulls the green distribution to the
+                    right (fewer big losses) and makes the left tail (very bad outcomes) much smaller.
+                    </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            # High-level takeaway
+            st.markdown(
+                """
+                <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.6rem;">
+                <strong>Big picture:</strong> If the rounded portfolio still meaningfully lowers VaR and CVaR and
+                the green histogram has a much smaller left tail than the orange one, your hedge is doing its job:
+                trading some upside or premium cost today for smaller potential downside in a bad week or month.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+
         else:
             st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-    # Sidebar
-    st.sidebar.title("Need a public link?")
-    st.sidebar.markdown(
-        "Deploy to **Streamlit Community Cloud** (free) to generate a shareable URL."
-        " Push this repo to GitHub, sign into streamlit.io, and point a new app at `app.py`."
-        " Details in `DEPLOY.md`."
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Made with ❤️ for interactive hedging research.")
-
-
-if __name__ == "__main__":
-    main()
