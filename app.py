@@ -446,54 +446,14 @@ def _clean_quotes(df: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     df_reg, lo, hi = load_history()
 
-    # Initial values from daily data (fallback only)
+    # Daily close levels (used as fallback / context)
     latest_spy = float(df_reg["SPY"].iloc[-1])
     latest_vix = float(df_reg["VIX"].iloc[-1])
 
+    # Regime label and explanation come directly from hedge_app
     suggested = suggested_regime_today(df_reg)
-    
-    # Base explanation from hedge_app
-    regime_reason_raw = build_regime_explanation(df_reg, lo, hi)
+    regime_reason = build_regime_explanation(df_reg, lo, hi)
 
-    # Clean up some strange negatives
-    regime_reason_clean = (
-        regime_reason_raw.replace("up -", "-")
-        .replace("down -", "-")
-        .replace("over the last 5 sessions", "over the last 5 trading days")
-    )
-
-    # 1) Keep ONLY the first sentence: "VIX at XX.XX is between ..."
-    first_sentence = regime_reason_clean.split(".")[0].strip() + "."
-
-    # 2) Extract the existing VIX number from that sentence (regex-free)
-    parts = first_sentence.split()
-    # Expected structure: ["VIX", "at", "16.35", "is", "between", ...]
-    old_vix_value = None
-    try:
-        idx = parts.index("at") + 1
-        old_vix_value = parts[idx]
-    except Exception:
-        old_vix_value = None
-
-    # 3) Load intraday data and replace the VIX value
-    try:
-        intraday_df = load_intraday(period="1d", interval="5m")
-    except Exception:
-        intraday_df = pd.DataFrame()
-
-    if not intraday_df.empty:
-        live_vix = float(intraday_df["^VIX"].iloc[-1])
-
-        if old_vix_value is not None:
-            # replace old value with new live VIX
-            parts[idx] = f"{live_vix:.2f}"
-            regime_reason = " ".join(parts)
-        else:
-            # safety fallback
-            regime_reason = first_sentence
-    else:
-        # no intraday → daily fallback
-        regime_reason = first_sentence
     # Header
     st.title(" SPY Risk Management App")
     st.markdown(
