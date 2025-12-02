@@ -159,17 +159,17 @@ def build_regime_explanation(df_reg: pd.DataFrame, lo: float, hi: float) -> str:
     # --- Regime sentence ---
     if current_regime == "LOW":
         regime_str = (
-            f"VIX at {vix_now:.2f} is below the calm threshold of {lo:.2f}, "
+            f"VIX is below the calm threshold of {lo:.2f}, "
             f"indicating a low-volatility environment."
         )
     elif current_regime == "HIGH":
         regime_str = (
-            f"VIX at {vix_now:.2f} is above the stress threshold of {hi:.2f}, "
+            f"VIX is above the stress threshold of {hi:.2f}, "
             f"indicating elevated market volatility."
         )
     else:  # MID
         regime_str = (
-            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
+            f"VIX is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
             f"pointing to a neutral regime."
         )
 
