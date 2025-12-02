@@ -443,31 +443,61 @@ def _clean_quotes(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 # Main app
 # -----------------------------------------------------------------------------
-
 def main() -> None:
     df_reg, lo, hi = load_history()
+
+    # Initial values from daily data (fallback only)
     latest_spy = float(df_reg["SPY"].iloc[-1])
     latest_vix = float(df_reg["VIX"].iloc[-1])
+
     suggested = suggested_regime_today(df_reg)
 
-    # Base explanation from hedge_app, with small cleanups
+    # Base explanation from hedge_app, with small cleanups first
     regime_reason_raw = build_regime_explanation(df_reg, lo, hi)
-    regime_reason = (
+    regime_reason_clean = (
         regime_reason_raw.replace("up -", "-")
         .replace("down -", "-")
         .replace("over the last 5 sessions", "over the last 5 trading days")
     )
+
+    # ---- Apply intraday override values (SPY & VIX) ----
+    try:
+        intraday_df = load_intraday(period="1d", interval="5m")
+    except Exception:
+        intraday_df = pd.DataFrame()
+
+    import re
+
     if not intraday_df.empty:
-    live_vix_str = f"{latest_vix:.2f}"
-    # Regex to capture: VIX at <some number>
-    regime_reason = re.sub(
-        r"VIX at\s+[0-9]+\.[0-9]+",
-        f"VIX at {live_vix_str}",
-        regime_reason_raw,
-        count=1  # only the first match
-    )
+
+        # Live intraday values
+        live_spy = float(intraday_df["SPY"].iloc[-1])
+        live_vix = float(intraday_df["^VIX"].iloc[-1])
+
+        # Calculate intraday VIX change
+        if len(intraday_df) > 1:
+            vix_change = live_vix - float(intraday_df["^VIX"].iloc[-2])
+        else:
+            vix_change = 0.0
+
+        # 1) Replace the "VIX at XX.XX" portion
+        regime_reason = re.sub(
+            r"VIX at\s+[0-9]+\.[0-9]+",
+            f"VIX at {live_vix:.2f}",
+            regime_reason_clean,
+            count=1
+        )
+
+        # 2) Replace the "Today's move is X.XX pts" portion
+        regime_reason = re.sub(
+            r"Today's move is [+-]?[0-9]+\.[0-9]+ pts",
+            f"Today's move is {vix_change:+.2f} pts",
+            regime_reason
+        )
+
     else:
-    regime_reason = regime_reason_raw
+        # Fallback to daily-only explanation
+        regime_reason = regime_reason_clean
     # Header
     st.title(" SPY Risk Management App")
     st.markdown(
