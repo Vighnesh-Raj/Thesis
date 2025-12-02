@@ -451,53 +451,49 @@ def main() -> None:
     latest_vix = float(df_reg["VIX"].iloc[-1])
 
     suggested = suggested_regime_today(df_reg)
-
-    # Base explanation from hedge_app, with small cleanups first
+    
+    # Base explanation from hedge_app
     regime_reason_raw = build_regime_explanation(df_reg, lo, hi)
+
+    # Clean up some strange negatives
     regime_reason_clean = (
         regime_reason_raw.replace("up -", "-")
         .replace("down -", "-")
         .replace("over the last 5 sessions", "over the last 5 trading days")
     )
 
-    # ---- Apply intraday override values (SPY & VIX) ----
+    # 1) Keep ONLY the first sentence: "VIX at XX.XX is between ..."
+    first_sentence = regime_reason_clean.split(".")[0].strip() + "."
+
+    # 2) Extract the existing VIX number from that sentence (regex-free)
+    parts = first_sentence.split()
+    # Expected structure: ["VIX", "at", "16.35", "is", "between", ...]
+    old_vix_value = None
+    try:
+        idx = parts.index("at") + 1
+        old_vix_value = parts[idx]
+    except Exception:
+        old_vix_value = None
+
+    # 3) Load intraday data and replace the VIX value
     try:
         intraday_df = load_intraday(period="1d", interval="5m")
     except Exception:
         intraday_df = pd.DataFrame()
 
-    import re
-
     if not intraday_df.empty:
-
-        # Live intraday values
-        live_spy = float(intraday_df["SPY"].iloc[-1])
         live_vix = float(intraday_df["^VIX"].iloc[-1])
 
-        # Calculate intraday VIX change
-        if len(intraday_df) > 1:
-            vix_change = live_vix - float(intraday_df["^VIX"].iloc[-2])
+        if old_vix_value is not None:
+            # replace old value with new live VIX
+            parts[idx] = f"{live_vix:.2f}"
+            regime_reason = " ".join(parts)
         else:
-            vix_change = 0.0
-
-        # 1) Replace the "VIX at XX.XX" portion
-        regime_reason = re.sub(
-            r"VIX at\s+[0-9]+\.[0-9]+",
-            f"VIX at {live_vix:.2f}",
-            regime_reason_clean,
-            count=1
-        )
-
-        # 2) Replace the "Today's move is X.XX pts" portion
-        regime_reason = re.sub(
-            r"Today's move is [+-]?[0-9]+\.[0-9]+ pts",
-            f"Today's move is {vix_change:+.2f} pts",
-            regime_reason
-        )
-
+            # safety fallback
+            regime_reason = first_sentence
     else:
-        # Fallback to daily-only explanation
-        regime_reason = regime_reason_clean
+        # no intraday → daily fallback
+        regime_reason = first_sentence
     # Header
     st.title(" SPY Risk Management App")
     st.markdown(
@@ -599,7 +595,7 @@ def main() -> None:
     )
 
     st.caption(
-        f"Regime cut-offs • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f}"
+        f"Regime cut-offs are calculated as following based on historical data: • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f} "
     )
     if last_refresh_display:
         st.caption(f"Price data refreshed at {last_refresh_display}")
