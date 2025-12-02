@@ -116,54 +116,68 @@ def fetch_intraday_quotes(
 
     return pd.concat(frames, axis=1).dropna()
 
-
 def build_regime_explanation(df_reg: pd.DataFrame, lo: float, hi: float) -> str:
-    """Return a short narrative explaining the suggested regime."""
+    """
+    Return a clean regime explanation using accurate:
+    - VIX level
+    - VIX daily change
+    - SPY 5-day return
+    - LOW / MID / HIGH logic
+    """
 
     current_regime = suggested_regime_today(df_reg)
     vix_now = float(df_reg["VIX"].iloc[-1])
     spy_now = float(df_reg["SPY"].iloc[-1])
 
-    vix_prev = float(df_reg["VIX"].iloc[-2]) if len(df_reg) > 1 else np.nan
-    vix_change = vix_now - vix_prev if np.isfinite(vix_prev) else np.nan
-    vix_pct_rank = float(df_reg["VIX"].rank(pct=True).iloc[-1] * 100.0)
-    trailing_mean = float(df_reg["VIX"].tail(WINDOW_DAYS).mean())
+    # --- VIX change (daily) ---
+    if len(df_reg) > 1:
+        vix_prev = float(df_reg["VIX"].iloc[-2])
+        vix_change = vix_now - vix_prev
+    else:
+        vix_prev = np.nan
+        vix_change = np.nan
 
-    lookback = min(5, len(df_reg) - 1)
-    spy_return = np.nan
-    if lookback > 0:
-        spy_return = (spy_now / float(df_reg["SPY"].iloc[-1 - lookback]) - 1.0) * 100.0
-
-    change_str = "flat"
     if np.isfinite(vix_change):
-        change_str = f"up {vix_change:+.2f} pts" if vix_change else "unchanged"
+        if abs(vix_change) < 1e-6:
+            vix_move_str = "unchanged"
+        else:
+            sign = "+" if vix_change > 0 else ""
+            vix_move_str = f"{sign}{vix_change:.2f} pts"
+    else:
+        vix_move_str = "N/A"
 
+    # --- SPY 5-day return ---
+    lookback = 5 if len(df_reg) > 5 else len(df_reg) - 1
+    if lookback > 0:
+        spy_then = float(df_reg["SPY"].iloc[-1 - lookback])
+        spy_ret = (spy_now / spy_then - 1.0) * 100.0
+        spy_dir = "higher" if spy_ret >= 0 else "lower"
+        spy_ret_str = f"SPY traded {spy_dir} by {abs(spy_ret):.1f}% over the last {lookback} trading days."
+    else:
+        spy_ret_str = ""
+    
+    # --- Regime sentence ---
     if current_regime == "LOW":
-        reason = (
-            f"VIX at {vix_now:.2f} sits beneath the calm threshold of {lo:.2f} "
-            f"({vix_pct_rank:.0f}th percentile) and is near the {WINDOW_DAYS}-day average "
-            f"of {trailing_mean:.2f}."
+        regime_str = (
+            f"VIX at {vix_now:.2f} is below the calm threshold of {lo:.2f}, "
+            f"indicating a low-volatility environment."
         )
     elif current_regime == "HIGH":
-        reason = (
-            f"VIX at {vix_now:.2f} breaks above the stress threshold of {hi:.2f} "
-            f"({vix_pct_rank:.0f}th percentile), signalling elevated hedging demand."
+        regime_str = (
+            f"VIX at {vix_now:.2f} is above the stress threshold of {hi:.2f}, "
+            f"indicating elevated market volatility."
         )
+    else:  # MID
+        regime_str = (
+            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
+            f"pointing to a neutral regime."
+        )
+
+    # --- Final result ---
+    if spy_ret_str:
+        return f"{regime_str} Today's move is {vix_move_str}. {spy_ret_str}"
     else:
-        reason = (
-            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) "
-            f"cut-offs ({vix_pct_rank:.0f}th percentile), pointing to a neutral regime."
-        )
-
-    if np.isfinite(vix_change) and vix_change:
-        reason += f" Today's move is {change_str}."
-
-    if np.isfinite(spy_return):
-        direction = "higher" if spy_return >= 0 else "lower"
-        reason += f" SPY traded {direction} by {abs(spy_return):.1f}% over the last {lookback} sessions."
-
-    return reason
-
+        return f"{regime_str} Today's move is {vix_move_str}."
 
 def select_regime_pool(
     df_reg: pd.DataFrame, mode: str = "auto", override: str | None = None
