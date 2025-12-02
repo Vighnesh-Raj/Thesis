@@ -118,67 +118,30 @@ def fetch_intraday_quotes(
 
 def build_regime_explanation(df_reg: pd.DataFrame, lo: float, hi: float) -> str:
     """
-    Return a clean regime explanation using accurate:
-    - VIX level
-    - VIX daily change
-    - SPY 5-day return
-    - LOW / MID / HIGH logic
+    Return a single-sentence regime explanation like:
+    - 'VIX is below the calm threshold ...'
+    - 'VIX is between the calm and stress cut-offs ...'
+    - 'VIX is above the stress threshold ...'
     """
 
     current_regime = suggested_regime_today(df_reg)
     vix_now = float(df_reg["VIX"].iloc[-1])
-    spy_now = float(df_reg["SPY"].iloc[-1])
 
-    # --- VIX change (daily) ---
-    if len(df_reg) > 1:
-        vix_prev = float(df_reg["VIX"].iloc[-2])
-        vix_change = vix_now - vix_prev
-    else:
-        vix_prev = np.nan
-        vix_change = np.nan
-
-    if np.isfinite(vix_change):
-        if abs(vix_change) < 1e-6:
-            vix_move_str = "unchanged"
-        else:
-            sign = "+" if vix_change > 0 else ""
-            vix_move_str = f"{sign}{vix_change:.2f} pts"
-    else:
-        vix_move_str = "N/A"
-
-    # --- SPY 5-day return ---
-    lookback = 5 if len(df_reg) > 5 else len(df_reg) - 1
-    if lookback > 0:
-        spy_then = float(df_reg["SPY"].iloc[-1 - lookback])
-        spy_ret = (spy_now / spy_then - 1.0) * 100.0
-        spy_dir = "higher" if spy_ret >= 0 else "lower"
-        spy_ret_str = f"SPY traded {spy_dir} by {abs(spy_ret):.1f}% over the last {lookback} trading days."
-    else:
-        spy_ret_str = ""
-    
-    # --- Regime sentence ---
     if current_regime == "LOW":
-        regime_str = (
-            f"VIX is below the calm threshold of {lo:.2f}, "
-            f"indicating a low-volatility environment."
+        return (
+            f"VIX at {vix_now:.2f} is below the calm threshold of {lo:.2f}, "
+            f"indicating a low-volatility regime."
         )
     elif current_regime == "HIGH":
-        regime_str = (
-            f"VIX is above the stress threshold of {hi:.2f}, "
-            f"indicating elevated market volatility."
+        return (
+            f"VIX at {vix_now:.2f} is above the stress threshold of {hi:.2f}, "
+            f"indicating a high-volatility, stressed regime."
         )
     else:  # MID
-        regime_str = (
-            f"VIX is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
+        return (
+            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
             f"pointing to a neutral regime."
         )
-
-    # --- Final result ---
-    if spy_ret_str:
-        return f"{regime_str} Today's move is {vix_move_str}. {spy_ret_str}"
-    else:
-        return f"{regime_str} Today's move is {vix_move_str}."
-
 def select_regime_pool(
     df_reg: pd.DataFrame, mode: str = "auto", override: str | None = None
 ) -> Tuple[str, pd.DataFrame]:
