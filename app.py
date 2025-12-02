@@ -907,9 +907,9 @@ def main() -> None:
             st.markdown(
                 """
                 <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                <strong>How to read this:</strong> Each row is an option contract. The fractional LP solution is the
-                mathematically optimal hedge if you could trade fractions of contracts. The rounded portfolio is the
-                version you can actually trade (whole contracts), keeping as close as possible to the optimal hedge and
+                <strong>What the optimal allocation table means? </strong> Each row is an option contract. The fractional LP solution is the
+                mathematically optimal hedge if you are able to trade fractions of contracts. The rounded portfolio is the
+                version you can only trade whole contracts, keeping as close as possible to the optimal hedge and
                 your budget / zero-cost settings.
                 </p>
                 """,
@@ -922,9 +922,9 @@ def main() -> None:
             st.markdown(
                 f"""
                 <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                <strong>How to read this:</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level:
-                with probability about {float(result_state['alpha_label']):.0%}, losses should be smaller than this number.
-                CVaR@{result_state['alpha_label']} is the <em>average</em> loss in those worst-case days.<br>
+                <strong>Risk Snapshot Table Interpretation :</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level.
+                This means that with probability about {float(result_state['alpha_label']):.0%}, losses should NOT be more than this number in your horizon.
+                CVaR@{result_state['alpha_label']} is the <em>average</em> loss, given you are already in those worst-case days.<br>
                 The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus doing nothing.
                 Bigger positive numbers in that row mean your hedge is cutting more downside tail risk.
                 </p>
@@ -969,7 +969,7 @@ def main() -> None:
                 """
                 <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.6rem;">
                 <strong>Big picture:</strong> If the rounded portfolio still meaningfully lowers VaR and CVaR and
-                the green histogram has a much smaller left tail than the orange one, your hedge is doing its job:
+                the green histogram has a much smaller left tail than the orange one, your hedge is doing its job of
                 trading some upside or premium cost today for smaller potential downside in a bad week or month.
                 </p>
                 """,
