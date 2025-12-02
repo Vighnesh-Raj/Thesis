@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
-
+import re
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -457,13 +457,23 @@ def main() -> None:
         .replace("down -", "-")
         .replace("over the last 5 sessions", "over the last 5 trading days")
     )
-
+    if not intraday_df.empty:
+    live_vix_str = f"{latest_vix:.2f}"
+    # Regex to capture: VIX at <some number>
+    regime_reason = re.sub(
+        r"VIX at\s+[0-9]+\.[0-9]+",
+        f"VIX at {live_vix_str}",
+        regime_reason_raw,
+        count=1  # only the first match
+    )
+    else:
+    regime_reason = regime_reason_raw
     # Header
-    st.title("🛡️ SPY Hedge Cockpit")
+    st.title(" SPY Risk Management App")
     st.markdown(
         """
         <p style='color:rgba(230,244,234,0.75); font-size:1.05rem;'>
-        This app lets you design and evaluate SPY option hedges using live SPY/VIX data
+        This app lets you design and evaluate SPY European Style option hedges using live SPY/VIX data
         and regime-based scenario simulations. Use the tabs below to load your option
         quotes, set hedging constraints, and compare risk with and without the hedge.
         </p>
@@ -475,7 +485,7 @@ def main() -> None:
     st.markdown(
         """
         <div class='shadow-card' style='margin-top:0.75rem;'>
-            <h4 style='margin-bottom:0.4rem;'>How to hedge with this cockpit</h4>
+            <h4 style='margin-bottom:0.4rem;'>How to hedge with this App</h4>
             <ol style='padding-left:1.2rem; color:rgba(230,244,234,0.8);'>
                 <li>Glance at the live SPY/VIX context and suggested regime to anchor your view on volatility.</li>
                 <li>In <em>Option Quotes</em>, paste or edit your SPY option quotes, matching the contracts you can trade.</li>
