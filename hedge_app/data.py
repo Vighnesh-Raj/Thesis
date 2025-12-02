@@ -129,17 +129,17 @@ def build_regime_explanation(df_reg: pd.DataFrame, lo: float, hi: float) -> str:
 
     if current_regime == "LOW":
         return (
-            f"VIX at {vix_now:.2f} is below the calm threshold of {lo:.2f}, "
+            f"VIX is below the calm threshold of {lo:.2f}, "
             f"indicating a low-volatility regime."
         )
     elif current_regime == "HIGH":
         return (
-            f"VIX at {vix_now:.2f} is above the stress threshold of {hi:.2f}, "
+            f"VIX is above the stress threshold of {hi:.2f}, "
             f"indicating a high-volatility, stressed regime."
         )
     else:  # MID
         return (
-            f"VIX at {vix_now:.2f} is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
+            f"VIX is between the calm ({lo:.2f}) and stress ({hi:.2f}) cut-offs, "
             f"pointing to a neutral regime."
         )
 def select_regime_pool(
