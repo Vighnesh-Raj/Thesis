@@ -916,22 +916,64 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
+            
             # --- Risk Snapshot + explanation ---
             st.markdown("### Risk Snapshot")
-            st.dataframe(result_state["metrics_df"], **_DATAFRAME_KWARGS)
+            # Extract values
+            alpha_label = result_state["alpha_label"]
+            unh = result_state["unhedged"]
+            hd = result_state["hedged"]
+            # Compute VaR & CVaR
+            var_unh = float(np.quantile(-unh, float(alpha_label)))
+            var_hd = float(np.quantile(-hd, float(alpha_label)))
+            
+            def cvar(series: np.ndarray) -> float:
+                losses = -series
+                cutoff = np.quantile(losses, float(alpha_label))
+                return float(losses[losses >= cutoff].mean())
+            
+            cvar_unh = cvar(unh)
+            cvar_hd = cvar(hd)
+            
+            # Formatting helper
+            def fmt_dollar(x):
+                return f"${x:,.0f}" if x >= 0 else f"-${abs(x):,.0f}"
+            
+            # Prepare formatted table
+            metrics_df = pd.DataFrame(
+                {
+                    " ": ["Unhedged", "Hedged", "Improvement"],
+                    f"VaR@{alpha_label}": [
+                        fmt_dollar(var_unh),
+                        fmt_dollar(var_hd),
+                        fmt_dollar(var_unh - var_hd),
+                    ],
+                    f"CVaR@{alpha_label}": [
+                        fmt_dollar(cvar_unh),
+                        fmt_dollar(cvar_hd),
+                        fmt_dollar(cvar_unh - cvar_hd),
+                    ],
+                }
+            )
+            
+            # Show formatted table
+            st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
+            
+            # Interpretation note
             st.markdown(
                 f"""
                 <p style="font-size:0.95rem; color:rgba(230,244,234,0.8); margin-top:0.4rem;">
-                <strong>Risk Snapshot Table Interpretation :</strong> VaR@{result_state['alpha_label']} is a “bad day” loss level.
-                This means that with probability about {float(result_state['alpha_label']):.0%}, losses should NOT be more than this number in your horizon.
-                CVaR@{result_state['alpha_label']} is the <em>average</em> loss, given you are already in those worst-case days.<br>
-                The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus doing nothing.
-                Bigger positive numbers in that row mean your hedge is cutting more downside tail risk.
+                <strong>Risk Snapshot Table Interpretation:</strong><br>
+                • <strong>VaR@{alpha_label}</strong> is the “bad day” loss level. There is about a {float(alpha_label):.0%}
+                  chance that losses will be <em>less</em> than this magnitude.<br>
+                • <strong>CVaR@{alpha_label}</strong> is the <em>average</em> loss <u>given you are already in the worst {float(alpha_label):.0%}
+                  of scenarios</u>.<br><br>
+                The <strong>Improvement</strong> row shows how much the hedge reduces VaR and CVaR versus staying unhedged.
+                Larger positive numbers mean the hedge is removing more downside tail risk.
                 </p>
                 """,
                 unsafe_allow_html=True,
             )
-
             # --- Charts + explanation ---
             fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
             fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
