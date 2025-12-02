@@ -934,23 +934,25 @@ def main() -> None:
             
             cvar_unh = cvar(unh)
             cvar_hd = cvar(hd)
-            
-            # Formatting helper
-            def fmt_dollar(x):
-                return f"${x:,.0f}" if x >= 0 else f"-${abs(x):,.0f}"
+            # Formatting helper: takes a signed P&L number
+            def fmt_dollar(x: float) -> str:
+                if abs(x) < 0.5:
+                    return "$0"
+                sign = "-" if x < 0 else ""
+                return f"{sign}${abs(x):,.0f}"
             
             # Prepare formatted table
             metrics_df = pd.DataFrame(
                 {
                     " ": ["Unhedged", "Hedged", "Improvement"],
                     f"VaR@{alpha_label}": [
-                        fmt_dollar(var_unh),
-                        fmt_dollar(var_hd),
+                        fmt_dollar(-var_unh),
+                        fmt_dollar(-var_hd),
                         fmt_dollar(var_unh - var_hd),
                     ],
                     f"CVaR@{alpha_label}": [
-                        fmt_dollar(cvar_unh),
-                        fmt_dollar(cvar_hd),
+                        fmt_dollar(-cvar_unh),
+                        fmt_dollar(-cvar_hd),
                         fmt_dollar(cvar_unh - cvar_hd),
                     ],
                 }
