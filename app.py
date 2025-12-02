@@ -538,24 +538,18 @@ def main() -> None:
                 <div class='metric-card regime-card'>
                     <h3>Suggested Regime</h3>
                     <p>{suggested}</p>
+                    <p style='font-size:0.9rem; margin-top:0.35rem; color:rgba(230,244,234,0.8);'>
+                        {regime_reason}
+                    </p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    # Explanation card for regime, then cutoffs + refresh text
-    st.markdown(
-        f"""
-        <div class='shadow-card' style='margin-top:1rem;'>
-            <h4 style='margin-bottom:0.4rem;'>Why {suggested} today?</h4>
-            <p style='margin-bottom:0; color:rgba(230,244,234,0.8);'>{regime_reason}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    # Regime cut-offs + refresh text (no separate "Why" card anymore)
     st.caption(
-        f"Regime cut-offs are calculated as following based on historical data: • LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f} "
+        f"Regime cut-offs are calculated as following based on historical data: "
+        f"• LOW ≤ {lo:.2f} • MID in ({lo:.2f}, {hi:.2f}) • HIGH ≥ {hi:.2f} "
     )
     if last_refresh_display:
         st.caption(f"Price data refreshed at {last_refresh_display}")
@@ -571,9 +565,7 @@ def main() -> None:
             key="price_window",
         )
 
-        # If user changed timeframe, the script will rerun with new state on next run.
         # For this run, we still use intraday_df computed above, which matches current_tf.
-
         if not intraday_df.empty:
             st.plotly_chart(_build_intraday_chart(intraday_df), use_container_width=True, theme=None)
         else:
@@ -912,7 +904,6 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-            
             # --- Risk Snapshot + explanation ---
             st.markdown("### Risk Snapshot")
             # Extract values
@@ -922,21 +913,22 @@ def main() -> None:
             # Compute VaR & CVaR
             var_unh = float(np.quantile(-unh, float(alpha_label)))
             var_hd = float(np.quantile(-hd, float(alpha_label)))
-            
+
             def cvar(series: np.ndarray) -> float:
                 losses = -series
                 cutoff = np.quantile(losses, float(alpha_label))
                 return float(losses[losses >= cutoff].mean())
-            
+
             cvar_unh = cvar(unh)
             cvar_hd = cvar(hd)
+
             # Formatting helper: takes a signed P&L number
             def fmt_dollar(x: float) -> str:
                 if abs(x) < 0.5:
                     return "$0"
                 sign = "-" if x < 0 else ""
                 return f"{sign}${abs(x):,.0f}"
-            
+
             # Prepare formatted table
             metrics_df = pd.DataFrame(
                 {
@@ -953,10 +945,10 @@ def main() -> None:
                     ],
                 }
             )
-            
+
             # Show formatted table
             st.dataframe(metrics_df, **_DATAFRAME_KWARGS)
-            
+
             # Interpretation note
             st.markdown(
                 f"""
@@ -972,6 +964,7 @@ def main() -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
             # --- Charts + explanation ---
             fig_payoff = _plot_payoff_curve(result_state["payoff_df"], result_state["S0"])
             fig_hist = _plot_pnl_hist(result_state["unhedged"], result_state["hedged"])
@@ -1020,9 +1013,6 @@ def main() -> None:
             st.info("Configure inputs and click **Simulate / Optimize** to populate this panel.")
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-
-
 
 if __name__ == "__main__":
     main()
