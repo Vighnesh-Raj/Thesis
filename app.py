@@ -397,8 +397,27 @@ def _plot_pnl_hist(unhedged: np.ndarray, hedged: np.ndarray):
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     bins = max(30, int(math.sqrt(len(unhedged))))
-    ax.hist(unhedged, bins=bins, alpha=0.45, color="#FF7F50", label="Unhedged")
-    ax.hist(hedged, bins=bins, alpha=0.55, color="#21CE99", label="Hedged")
+
+    # Draw hedged as filled bars
+    ax.hist(
+        hedged,
+        bins=bins,
+        alpha=0.45,
+        color="#21CE99",
+        label="Hedged",
+    )
+
+    # Draw unhedged as an outline on top so it’s always visible
+    ax.hist(
+        unhedged,
+        bins=bins,
+        histtype="step",
+        linewidth=1.8,
+        color="#FF7F50",
+        label="Unhedged",
+        zorder=3,
+    )
+
     ax.axvline(0, color="#0B291B", linestyle="--", linewidth=1)
     ax.legend()
     ax.set_title("Scenario P&L Distribution")
@@ -406,6 +425,7 @@ def _plot_pnl_hist(unhedged: np.ndarray, hedged: np.ndarray):
     ax.set_ylabel("Frequency")
     fig.tight_layout()
     return fig
+
 
 
 def _clean_quotes(df: pd.DataFrame) -> pd.DataFrame:
